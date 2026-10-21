@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "121297616379",
+    "project_id": "xlive-b44e2",
+    "storage_bucket": "xlive-b44e2.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:121297616379:android:bbec6674beda76939c1f5e",
+        "android_client_info": {
+          "package_name": "com.xlive.xlive_mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD43xMTr9bMS-CVS2zzdmVQnYdIpeFk6Ek"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

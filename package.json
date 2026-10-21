@@ -1,0 +1,13 @@
+{
+  "name": "xlive",
+  "private": true,
+  "scripts": {
+    "mobile:pub": "cd apps/mobile && flutter pub get",
+    "mobile:ios": "bash apps/mobile/scripts/run_ios_simulator.sh",
+    "mobile:ios:sim": "bash apps/mobile/scripts/run_ios_simulator.sh",
+    "mobile:ios:build": "cd apps/mobile && flutter build ios --simulator --no-codesign",
+    "mobile:apk": "bash apps/mobile/scripts/build_apk.sh",
+    "mobile:devices": "cd apps/mobile && flutter devices",
+    "build": "bash apps/mobile/scripts/build_apk.sh"
+  }
+}

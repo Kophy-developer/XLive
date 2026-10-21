@@ -1,0 +1,5 @@
+package com.xlive.xlive_mobile
+
+import io.flutter.embedding.android.FlutterActivity
+
+class MainActivity : FlutterActivity()
