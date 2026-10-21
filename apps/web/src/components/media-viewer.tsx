@@ -1117,22 +1117,16 @@ function CommentsPanel({
     }
     return current.id;
   };
-  const topLevel = (() => {
-    const roots = visible.filter((c) => !c.parentId || !byId.has(c.parentId));
-    const meId = me?.id;
-    if (!meId) return roots;
-    const mine: typeof roots = [];
-    const others: typeof roots = [];
-    for (const c of roots) {
-      if (c.authorId === meId) mine.push(c);
-      else others.push(c);
-    }
-    return [...mine, ...others];
-  })();
+  const byNewest = (a: MediaComment, b: MediaComment) =>
+    new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+  const topLevel = visible
+    .filter((c) => !c.parentId || !byId.has(c.parentId))
+    .slice()
+    .sort(byNewest);
   const repliesFor = (id: string) =>
     visible
       .filter((c) => c.id !== id && rootIdFor(c) === id)
-      .sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime());
+      .sort(byNewest);
 
   useEffect(() => {
     if (!query.data) return;
