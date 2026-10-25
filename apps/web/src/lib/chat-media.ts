@@ -4,6 +4,114 @@ const ALBUM_PREFIX = "\u2063xlive_chat_album:";
 const ALBUM_SUFFIX = "\u2063";
 const NAME_KEY = "xlive_chat_file_names";
 
+const MESSAGE_KIND_TYPES = new Set([
+  "message",
+  "text",
+  "chat",
+  "dm",
+  "group",
+  "system",
+  "notification",
+  "event",
+  "reply",
+  "edited",
+  "deleted",
+]);
+
+export type ChatMediaKind = "image" | "video" | "document" | "voice" | "audio" | "sticker";
+
+function looksLikeImageUrl(url?: string | null) {
+  const u = (url || "").toLowerCase();
+  if (!u) return false;
+  if (u.includes("/image/upload/")) return true;
+  if (/\.(png|jpe?g|gif|webp|heic|heif|avif|bmp)(\?|#|$)/i.test(u)) return true;
+  if (u.includes("image%2f") || u.includes("image/")) return true;
+  return false;
+}
+
+function looksLikeVideoUrl(url?: string | null) {
+  const u = (url || "").toLowerCase();
+  if (!u) return false;
+  if (u.includes("/video/upload/")) return true;
+  if (/\.(mp4|m4v|mov|webm|mkv|avi)(\?|#|$)/i.test(u)) return true;
+  return false;
+}
+
+function looksLikeAudioUrl(url?: string | null) {
+  const u = (url || "").toLowerCase();
+  if (!u) return false;
+  return /\.(m4a|aac|mp3|wav|ogg|opus)(\?|#|$)/i.test(u);
+}
+
+function canonicalizeMediaToken(raw?: string | null): ChatMediaKind | undefined {
+  const t = (raw || "").trim().toLowerCase();
+  if (!t || MESSAGE_KIND_TYPES.has(t)) return undefined;
+  if (t.includes("sticker")) return "sticker";
+  if (t.includes("image") || t.includes("photo") || t.includes("gif") || t.startsWith("image/")) return "image";
+  if (t.includes("video") || t.startsWith("video/")) return "video";
+  if (t.includes("voice") || t.includes("audio") || t.startsWith("audio/")) return t.includes("voice") ? "voice" : "audio";
+  if (t.includes("doc") || t.includes("pdf") || t.includes("file") || t.includes("sheet") || t.includes("receipt")) {
+    return "document";
+  }
+  return undefined;
+}
+
+export function pickChatMediaTypeField(doc: Record<string, unknown> | null | undefined, raw?: Record<string, unknown> | null) {
+  const attachment =
+    (doc?.attachment && typeof doc.attachment === "object" ? (doc.attachment as Record<string, unknown>) : null) ||
+    (doc?.file && typeof doc.file === "object" ? (doc.file as Record<string, unknown>) : null) ||
+    (doc?.media && typeof doc.media === "object" ? (doc.media as Record<string, unknown>) : null) ||
+    null;
+  const candidates = [
+    doc?.mediaType,
+    doc?.attachmentType,
+    doc?.fileType,
+    doc?.mimeType,
+    attachment?.mediaType,
+    attachment?.type,
+    attachment?.fileType,
+    attachment?.mimeType,
+    raw?.mediaType,
+    raw?.attachmentType,
+    raw?.mimeType,
+    doc?.type,
+    raw?.type,
+  ];
+  for (const candidate of candidates) {
+    const kind = canonicalizeMediaToken(typeof candidate === "string" ? candidate : undefined);
+    if (kind) return kind;
+  }
+  return undefined;
+}
+
+export function resolveChatMediaKind(mediaType?: string | null, mediaUrl?: string | null): ChatMediaKind | undefined {
+  const fromType = canonicalizeMediaToken(mediaType);
+  if (fromType) return fromType;
+  if (looksLikeImageUrl(mediaUrl)) return "image";
+  if (looksLikeVideoUrl(mediaUrl)) return "video";
+  if (looksLikeAudioUrl(mediaUrl)) return "voice";
+  if (mediaUrl && mediaUrl.trim()) return "document";
+  return undefined;
+}
+
+export function isChatImageMessage(msg: Pick<ChatMessage, "mediaType" | "mediaUrl">) {
+  const kind = resolveChatMediaKind(msg.mediaType, msg.mediaUrl);
+  return kind === "image" || kind === "sticker";
+}
+
+export function isChatVideoMessage(msg: Pick<ChatMessage, "mediaType" | "mediaUrl">) {
+  return resolveChatMediaKind(msg.mediaType, msg.mediaUrl) === "video";
+}
+
+export function isChatDocumentMessage(msg: Pick<ChatMessage, "mediaType" | "mediaUrl">) {
+  return resolveChatMediaKind(msg.mediaType, msg.mediaUrl) === "document";
+}
+
+export function isChatVoiceMessage(msg: Pick<ChatMessage, "mediaType" | "mediaUrl">) {
+  const kind = resolveChatMediaKind(msg.mediaType, msg.mediaUrl);
+  return kind === "voice" || kind === "audio";
+}
+
 export type PendingChatFile = {
   key: string;
   file: File;
@@ -201,7 +309,7 @@ export function groupChatBubbles(messages: ChatMessage[]): ChatBubble[] {
     const m = messages[i];
     const albumId = chatAlbumIdFromContent(m.content);
     const groupable =
-      m.mediaType === "image" &&
+      isChatImageMessage(m) &&
       Boolean(m.mediaUrl) &&
       Boolean(albumId) &&
       !visibleChatCaption(m.content);
@@ -212,7 +320,7 @@ export function groupChatBubbles(messages: ChatMessage[]): ChatBubble[] {
         const n = messages[j];
         const nextId = chatAlbumIdFromContent(n.content);
         if (
-          n.mediaType === "image" &&
+          isChatImageMessage(n) &&
           n.mediaUrl &&
           n.senderId === m.senderId &&
           nextId === albumId &&

@@ -1,4 +1,5 @@
 import '../../../core/network/api_json.dart';
+import '../chat_media_kind.dart';
 
 class ChatPeer {
   const ChatPeer({
@@ -198,57 +199,23 @@ class ChatMessage {
 
   bool get hasMedia => mediaUrl != null && mediaUrl!.isNotEmpty;
 
+  String? get resolvedMediaKind => resolveChatMediaKind(mediaType, mediaUrl);
+
   bool get isImage {
-    final t = mediaType?.toLowerCase() ?? '';
-    if (t.contains('image') || t.contains('photo') || t.contains('sticker') || t.contains('gif')) return true;
-    final u = mediaUrl?.toLowerCase() ?? '';
-    return u.endsWith('.png') || u.endsWith('.jpg') || u.endsWith('.jpeg') || u.endsWith('.gif') || u.endsWith('.webp');
+    final kind = resolvedMediaKind;
+    return kind == 'image' || kind == 'sticker';
   }
 
-  bool get isSticker => (mediaType?.toLowerCase() ?? '').contains('sticker');
+  bool get isSticker => resolvedMediaKind == 'sticker';
 
   bool get isAudio {
-    final t = mediaType?.toLowerCase() ?? '';
-    if (t.contains('audio') || t.contains('voice')) return true;
-    final u = mediaUrl?.toLowerCase() ?? '';
-    return u.endsWith('.m4a') ||
-        u.endsWith('.aac') ||
-        u.endsWith('.mp3') ||
-        u.endsWith('.wav') ||
-        u.endsWith('.ogg') ||
-        u.endsWith('.opus');
+    final kind = resolvedMediaKind;
+    return kind == 'audio' || kind == 'voice';
   }
 
-  bool get isVideo {
-    if (isImage || isAudio) return false;
-    final t = mediaType?.toLowerCase() ?? '';
-    if (t.contains('video')) return true;
-    final u = mediaUrl?.toLowerCase() ?? '';
-    return u.endsWith('.mp4') ||
-        u.endsWith('.mov') ||
-        u.endsWith('.m4v') ||
-        u.endsWith('.avi') ||
-        u.endsWith('.mkv') ||
-        u.endsWith('.webm');
-  }
+  bool get isVideo => resolvedMediaKind == 'video';
 
-  bool get isDocument {
-    if (isAudio || isSticker) return false;
-    final t = mediaType?.toLowerCase() ?? '';
-    if (t.contains('doc') || t.contains('pdf') || t.contains('file') || t.contains('sheet') || t.contains('receipt')) return true;
-    final u = (mediaUrl ?? '').toLowerCase();
-    if (u.endsWith('.pdf') ||
-        u.endsWith('.doc') ||
-        u.endsWith('.docx') ||
-        u.endsWith('.xls') ||
-        u.endsWith('.xlsx') ||
-        u.endsWith('.txt') ||
-        u.endsWith('.csv') ||
-        u.endsWith('.zip')) {
-      return true;
-    }
-    return !isImage && !isVideo && hasMedia;
-  }
+  bool get isDocument => resolvedMediaKind == 'document';
 
   String get timeLabel {
     final date = createdAt;
@@ -322,10 +289,22 @@ class ChatMessage {
         ApiJson.pickString(json, ['mediaUrl', 'url', 'attachmentUrl', 'fileUrl', 'downloadUrl', 'filePath', 'path']) ??
         (attachment != null ? ApiJson.pickString(attachment, ['url', 'fileUrl', 'mediaUrl', 'downloadUrl', 'path']) : null) ??
         (firstAttachment != null ? ApiJson.pickString(firstAttachment, ['url', 'fileUrl', 'mediaUrl', 'downloadUrl', 'path']) : null);
-    final mediaType = ApiJson.pickString(payload, ['mediaType', 'type', 'attachmentType', 'fileType']) ??
-        ApiJson.pickString(json, ['mediaType', 'type', 'attachmentType', 'fileType']) ??
-        (attachment != null ? ApiJson.pickString(attachment, ['mediaType', 'type', 'fileType', 'mimeType']) : null) ??
-        (firstAttachment != null ? ApiJson.pickString(firstAttachment, ['mediaType', 'type', 'fileType', 'mimeType']) : null);
+    final mediaType = resolveChatMediaKind(
+      pickChatMediaTypeCandidate(
+        mediaType: ApiJson.pickString(payload, ['mediaType']) ?? ApiJson.pickString(json, ['mediaType']),
+        attachmentType: ApiJson.pickString(payload, ['attachmentType']) ?? ApiJson.pickString(json, ['attachmentType']),
+        fileType: ApiJson.pickString(payload, ['fileType']) ?? ApiJson.pickString(json, ['fileType']),
+        mimeType: ApiJson.pickString(payload, ['mimeType']) ??
+            ApiJson.pickString(json, ['mimeType']) ??
+            (attachment != null ? ApiJson.pickString(attachment, ['mimeType', 'fileType', 'mediaType']) : null) ??
+            (firstAttachment != null ? ApiJson.pickString(firstAttachment, ['mimeType', 'fileType', 'mediaType']) : null),
+        genericType: ApiJson.pickString(payload, ['type']) ??
+            ApiJson.pickString(json, ['type']) ??
+            (attachment != null ? ApiJson.pickString(attachment, ['type']) : null) ??
+            (firstAttachment != null ? ApiJson.pickString(firstAttachment, ['type']) : null),
+      ),
+      mediaUrl,
+    );
     return ChatMessage(
       id: ApiJson.pickString(payload, ['id', '_id']) ?? ApiJson.pickString(json, ['id', '_id']) ?? '',
       chatId: chatId ?? ApiJson.pickString(payload, ['chatId']) ?? ApiJson.pickString(json, ['chatId']) ?? '',

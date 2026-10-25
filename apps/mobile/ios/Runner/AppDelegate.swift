@@ -12,11 +12,15 @@ import ReplayKit
       UNUserNotificationCenter.current().delegate = self as UNUserNotificationCenterDelegate
     }
     application.registerForRemoteNotifications()
+    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
 
-    let controller: FlutterViewController = window?.rootViewController as! FlutterViewController
+  func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
+    GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+
     let screenShareChannel = FlutterMethodChannel(
       name: "com.xlive.app/screenshare",
-      binaryMessenger: controller.binaryMessenger
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )
 
     screenShareChannel.setMethodCallHandler { (call: FlutterMethodCall, result: @escaping FlutterResult) in
@@ -44,11 +48,5 @@ import ReplayKit
         result(FlutterMethodNotImplemented)
       }
     }
-
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
-  }
-
-  func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
-    GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
   }
 }

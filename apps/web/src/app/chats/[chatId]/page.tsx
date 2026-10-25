@@ -31,6 +31,10 @@ import {
   chatImageUrls,
   contentsForPending,
   groupChatBubbles,
+  isChatDocumentMessage,
+  isChatImageMessage,
+  isChatVideoMessage,
+  isChatVoiceMessage,
   orderPendingForSend,
   pendingFromFiles,
   revokePendingPreviews,
@@ -327,13 +331,13 @@ function ChatThreadContent() {
     }
   }
 
-  async function sendPendingFiles() {
-    if (!pendingFiles.length || uploading) return false;
+  async function sendPendingFiles(files = pendingFiles) {
+    if (!files.length || uploading) return false;
     setUploading(true);
     setUploadError("");
     const replyId = replyingTo?.id;
     setReplyingTo(null);
-    const items = orderPendingForSend(pendingFiles);
+    const items = orderPendingForSend(files);
     const contents = contentsForPending(items);
     try {
       for (let i = 0; i < items.length; i += 1) {
@@ -369,13 +373,15 @@ function ChatThreadContent() {
 
     if (pendingFiles.length) {
       const composer = input.trim();
+      let filesToSend = pendingFiles;
       if (composer) {
         if (pendingFiles.length === 1 && !pendingFiles[0].caption?.trim()) {
-          setPendingFiles([{ ...pendingFiles[0], caption: composer }]);
+          filesToSend = [{ ...pendingFiles[0], caption: composer }];
+          setPendingFiles(filesToSend);
         }
         setInput("");
       }
-      const ok = await sendPendingFiles();
+      const ok = await sendPendingFiles(filesToSend);
       if (!ok) return;
       return;
     }
@@ -554,10 +560,10 @@ function ChatThreadContent() {
             const m = block.kind === "album" ? block.messages[block.messages.length - 1] : block.message;
             const isMine = currentUserId ? m.senderId === currentUserId : false;
             const hasMedia = Boolean(m.mediaUrl);
-            const isImage = m.mediaType === "image";
-            const isVideo = m.mediaType === "video";
-            const isDoc = m.mediaType === "document";
-            const isVoice = m.mediaType === "voice" || m.mediaType === "audio";
+            const isImage = isChatImageMessage(m);
+            const isVideo = isChatVideoMessage(m);
+            const isDoc = isChatDocumentMessage(m);
+            const isVoice = isChatVoiceMessage(m);
             const caption = visibleChatCaption(m.content);
             const imageUrls = album ? chatImageUrls(album) : hasMedia && isImage && m.mediaUrl ? [m.mediaUrl] : [];
 

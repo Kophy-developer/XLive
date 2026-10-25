@@ -2,7 +2,12 @@ import { api, withQuery } from "./client";
 import type { ChatMessage, ChatThread, GroupSummary } from "../types";
 import { publicHandle } from "../utils";
 import { getUserProfile } from "./feed";
-import { applyChatFileName, rememberChatUploadName } from "../chat-media";
+import {
+  applyChatFileName,
+  pickChatMediaTypeField,
+  rememberChatUploadName,
+  resolveChatMediaKind,
+} from "../chat-media";
 import { config } from "../config";
 import { session } from "../session";
 
@@ -150,8 +155,23 @@ export function normalizeChatMessage(input: unknown): ChatMessage {
   }
 
   const content = String(doc.content ?? doc.text ?? doc.body ?? raw?.content ?? raw?.text ?? "");
-  const mediaUrl = (doc.mediaUrl ?? doc.url ?? doc.fileUrl ?? raw?.mediaUrl ?? raw?.url) as string | undefined;
-  const mediaType = (doc.mediaType ?? doc.type ?? raw?.mediaType ?? raw?.type) as string | undefined;
+  const attachment =
+    (doc.attachment && typeof doc.attachment === "object" ? (doc.attachment as Record<string, unknown>) : null) ||
+    (doc.file && typeof doc.file === "object" ? (doc.file as Record<string, unknown>) : null) ||
+    (doc.media && typeof doc.media === "object" ? (doc.media as Record<string, unknown>) : null);
+  const mediaUrl = (doc.mediaUrl ??
+    doc.url ??
+    doc.fileUrl ??
+    doc.attachmentUrl ??
+    doc.downloadUrl ??
+    attachment?.url ??
+    attachment?.fileUrl ??
+    attachment?.mediaUrl ??
+    attachment?.downloadUrl ??
+    raw?.mediaUrl ??
+    raw?.url ??
+    raw?.fileUrl) as string | undefined;
+  const mediaType = resolveChatMediaKind(pickChatMediaTypeField(doc, raw ?? undefined), mediaUrl);
   const createdAt = String(doc.createdAt ?? doc.timestamp ?? raw?.createdAt ?? new Date().toISOString());
   const editedAt = doc.editedAt ? String(doc.editedAt) : undefined;
 
@@ -188,7 +208,10 @@ export function normalizeChatMessage(input: unknown): ChatMessage {
         undefined,
       content: (replyDoc.content ?? replyDoc.text ?? replyDoc.body) as string | undefined,
       mediaUrl: (replyDoc.mediaUrl ?? replyDoc.url) as string | undefined,
-      mediaType: (replyDoc.mediaType ?? replyDoc.type) as string | undefined,
+      mediaType: resolveChatMediaKind(
+        pickChatMediaTypeField(replyDoc),
+        (replyDoc.mediaUrl ?? replyDoc.url) as string | undefined
+      ),
     };
   } else if (doc.replyToContent || doc.replyToSenderName) {
     replyTo = {
