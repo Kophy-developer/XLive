@@ -115,6 +115,25 @@ class VideosRepository {
     return MediaDetail.fromJson(json, FeedContentType.video);
   }
 
+  Future<void> saveVideo(String videoId) async {
+    await _client.apiPost('/api/x-live/videos/$videoId/save');
+  }
+
+  Future<void> unsaveVideo(String videoId) async {
+    await _client.apiDelete('/api/x-live/videos/$videoId/save');
+  }
+
+  Future<List<MediaDetail>> listSavedVideos({int page = 1, int limit = 50}) async {
+    final json = await _client.apiGet(
+      '/api/x-live/videos/saved',
+      query: {'page': '$page', 'limit': '$limit'},
+    );
+    return ApiJson.listItems(json)
+        .map((item) => MediaDetail.fromJson(item, FeedContentType.video))
+        .where((v) => v.id.isNotEmpty)
+        .toList();
+  }
+
   Future<void> deleteVideo(String videoId) async {
     await _client.apiDelete('/api/x-live/videos/$videoId');
   }

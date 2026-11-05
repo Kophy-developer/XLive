@@ -72,6 +72,58 @@ String _exceptionHaystack(ApiException e) {
   return buf.toString().toLowerCase();
 }
 
+String? _validationFieldHint(Object? details) {
+  if (details == null) return null;
+  final parts = <String>[];
+
+  void walk(Object? value, [String? parent]) {
+    if (value == null) return;
+    if (value is Map) {
+      value.forEach((key, nested) {
+        final keyText = key.toString().trim();
+        if (keyText.isEmpty) {
+          walk(nested, parent);
+          return;
+        }
+        if (nested is String && nested.trim().isNotEmpty) {
+          final label = parent == null || parent.isEmpty ? keyText : '$parent.$keyText';
+          if (label.toLowerCase() == 'id' || label.toLowerCase() == 'err') {
+            parts.add(nested.trim());
+          } else {
+            parts.add('$label: ${nested.trim()}');
+          }
+          return;
+        }
+        if (nested is List) {
+          final msgs = nested.whereType<String>().map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+          if (msgs.isNotEmpty) {
+            final label = parent == null || parent.isEmpty ? keyText : '$parent.$keyText';
+            parts.add('$label: ${msgs.join(', ')}');
+            return;
+          }
+        }
+        walk(nested, parent == null || parent.isEmpty ? keyText : '$parent.$keyText');
+      });
+      return;
+    }
+    if (value is List) {
+      for (final nested in value) {
+        walk(nested, parent);
+      }
+    }
+  }
+
+  walk(details);
+  if (parts.isEmpty) return null;
+  final unique = <String>{};
+  for (final p in parts) {
+    if (p.toLowerCase() == 'invalid value' || p.toLowerCase() == 'please check your inputs') continue;
+    unique.add(p);
+  }
+  if (unique.isEmpty) return null;
+  return unique.take(3).join(' · ');
+}
+
 String? _mappedKnownApiMessage(ApiException e) {
   if (isContentTooLongApiError(e)) return chatMessageTooLongMessage;
   final msg = _exceptionHaystack(e);
@@ -98,6 +150,8 @@ String? _mappedKnownApiMessage(ApiException e) {
     return 'Too many requests. Wait a moment and try again.';
   }
   if (msg.contains('payload validation') || msg.contains('please check your inputs') || msg.contains('invalid value')) {
+    final fieldHint = _validationFieldHint(e.details);
+    if (fieldHint != null) return fieldHint;
     return 'Some details look invalid. Check your input and try again.';
   }
   if (msg.contains('file too large') || msg.contains('entity too large') || e.statusCode == 413) {

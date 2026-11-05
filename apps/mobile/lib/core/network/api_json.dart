@@ -20,7 +20,7 @@ class ApiJson {
       return raw.whereType<Map<String, dynamic>>().toList();
     }
     final data = dataMap(json);
-    for (final key in ['items', 'docs', 'results', 'data', 'users', 'following', 'videos', 'posts', 'feed', 'creators']) {
+    for (final key in ['items', 'docs', 'results', 'data', 'users', 'following', 'videos', 'posts', 'feed', 'creators', 'saved', 'notifications', 'messages', 'chat']) {
       final list = data[key];
       if (list is List) {
         return list.whereType<Map<String, dynamic>>().toList();

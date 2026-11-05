@@ -226,6 +226,16 @@ class _VideoClipPreviewScreenState extends State<VideoClipPreviewScreen> with Wi
     _unlockPrice = widget.args.unlockPrice;
     _createdAt = widget.args.createdAt;
     _soundMuted = FeedSoundStore.instance.muted;
+    unawaited(() async {
+      await ContentUnlockStore.ensureLoaded();
+      if (!mounted) return;
+      final unlocked = ContentUnlockStore.isUnlocked(type, id);
+      final nextLocked = widget.args.locked && !isSubscriber && !unlocked;
+      if (nextLocked != _locked) {
+        setState(() => _locked = nextLocked);
+        if (!_locked && widget.isActive) unawaited(_loadMedia());
+      }
+    }());
     if (widget.args.hasTarget) {
       _loadDetail();
       if (widget.isActive && !_locked) _loadMedia();
@@ -539,7 +549,12 @@ class _VideoClipPreviewScreenState extends State<VideoClipPreviewScreen> with Wi
     final balance = AuthSession.instance.walletBalance ?? 0;
     if (_unlockPrice > 0 && balance < _unlockPrice) {
       if (!mounted) return;
-      Navigator.pushNamed(context, '/wallet');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Not enough coins. You need $_unlockPrice coins to unlock.'),
+          action: SnackBarAction(label: 'Top up', onPressed: () => Navigator.pushNamed(context, '/wallet/xlive')),
+        ),
+      );
       return;
     }
     setState(() => _unlocking = true);
@@ -1033,12 +1048,17 @@ class _VideoClipPreviewScreenState extends State<VideoClipPreviewScreen> with Wi
       return;
     }
     final type = widget.args.targetType ?? 'video';
-    final saved = await SavedMediaStore.instance.toggle(targetType: type, targetId: id, canView: true);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(saved ? 'Saved' : 'Removed from Saved')),
-    );
-    setState(() {});
+    try {
+      final saved = await SavedMediaStore.instance.toggle(targetType: type, targetId: id, canView: true);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(saved ? 'Saved' : 'Removed from Saved')),
+      );
+      setState(() {});
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(friendlyApiMessage(e))));
+    }
   }
 
   void _openMoreMenu() {
@@ -1812,24 +1832,8 @@ class _CommentsSheetState extends State<CommentsSheet> {
     });
   }
 
-  List<CommentItem> _sortOwnFirst(List<CommentItem> list) {
-    final me = AuthSession.instance.user?.id;
-    if (me == null || me.isEmpty) return list;
-    final mine = <CommentItem>[];
-    final others = <CommentItem>[];
-    for (final c in list) {
-      if (c.authorId == me) {
-        mine.add(c);
-      } else {
-        others.add(c);
-      }
-    }
-    return [...mine, ...others];
-  }
-
-  List<CommentItem> get _topLevelComments => _sortOwnFirst(
-        _comments.where((c) => (c.parentId == null || c.parentId!.isEmpty) && !isReactionComment(c.content)).toList(),
-      );
+  List<CommentItem> get _topLevelComments =>
+      _comments.where((c) => (c.parentId == null || c.parentId!.isEmpty) && !isReactionComment(c.content)).toList();
 
   List<CommentItem> _repliesFor(String parentId) {
     final direct = _comments.where((c) => c.parentId == parentId && !isReactionComment(c.content)).toList();

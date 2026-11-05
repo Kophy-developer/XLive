@@ -1,3 +1,4 @@
+import '../../../core/media/content_unlock_store.dart';
 import '../../../core/network/api_json.dart';
 
 enum FeedContentType { video, clip, stream, unknown }
@@ -51,7 +52,13 @@ class FeedItem {
   final List<FeedItem> albumSlides;
   final bool creatorIsLive;
 
-  bool get isLocked => !accessAllowed || needsPurchase || needsUnlock;
+  bool get isLocked {
+    final targetType = type == FeedContentType.clip ? 'clip' : 'video';
+    if (ContentUnlockStore.isUnlocked(targetType, id) || ContentUnlockStore.isUnlocked('video', id)) {
+      return false;
+    }
+    return !accessAllowed || needsPurchase || needsUnlock;
+  }
 
   bool get isImage => mediaType?.toLowerCase() == 'image';
 

@@ -41,7 +41,7 @@ class _SavedMediaScreenState extends State<SavedMediaScreen> {
       _error = null;
     });
     try {
-      await SavedMediaStore.instance.ensureLoaded();
+      await SavedMediaStore.instance.ensureLoaded(force: true);
       final refs = SavedMediaStore.instance.items;
       final loaded = <VideoClipPreviewArgs>[];
       for (final ref in refs) {

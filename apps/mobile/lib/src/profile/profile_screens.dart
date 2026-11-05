@@ -74,7 +74,16 @@ class ProfileMainScreen extends StatelessWidget {
                     _ProfileTile(icon: Icons.card_giftcard_rounded, label: 'My Gifts', onTap: () => Navigator.pushNamed(context, '/profile/gifts')),
                     _ProfileTile(icon: Icons.bookmark_border_rounded, label: 'Saved', onTap: () => Navigator.pushNamed(context, '/profile/saved')),
                     _ProfileTile(icon: Icons.notifications_none_rounded, label: 'Notifications', onTap: () => Navigator.pushNamed(context, '/profile/notifications')),
-                    _ProfileTile(icon: Icons.inbox_outlined, label: 'Activity inbox', onTap: () => Navigator.pushNamed(context, '/integration/push-inbox')),
+                    _ProfileTile(
+                      icon: Icons.inbox_outlined,
+                      label: 'Activity inbox',
+                      badge: AuthSession.instance.notificationUnread > 0
+                          ? (AuthSession.instance.notificationUnread > 99
+                              ? '99+'
+                              : '${AuthSession.instance.notificationUnread}')
+                          : null,
+                      onTap: () => Navigator.pushNamed(context, '/integration/push-inbox'),
+                    ),
                     _ProfileTile(icon: Icons.tune_rounded, label: 'General Preference', onTap: () => Navigator.pushNamed(context, '/profile/general-preference')),
                     _ProfileTile(icon: Icons.block_rounded, label: 'Blocked accounts', onTap: () => Navigator.pushNamed(context, '/social/blocked')),
                     _ProfileTile(icon: Icons.live_tv_rounded, label: 'Live invites', onTap: () => Navigator.pushNamed(context, '/social/stream-invites')),
@@ -251,12 +260,19 @@ class _ProfileMenuCard extends StatelessWidget {
 }
 
 class _ProfileTile extends StatelessWidget {
-  const _ProfileTile({required this.icon, required this.label, required this.onTap, this.destructive = false});
+  const _ProfileTile({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.destructive = false,
+    this.badge,
+  });
 
   final IconData icon;
   final String label;
   final VoidCallback onTap;
   final bool destructive;
+  final String? badge;
 
   @override
   Widget build(BuildContext context) {
@@ -275,6 +291,20 @@ class _ProfileTile extends StatelessWidget {
               Icon(icon, size: 22, color: iconColor),
               const SizedBox(width: 14),
               Expanded(child: Text(label, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500, color: color))),
+              if (badge != null) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF8A2DDC),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    badge!,
+                    style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700),
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
               Icon(Icons.chevron_right_rounded, color: Colors.grey.shade400, size: 22),
             ],
           ),

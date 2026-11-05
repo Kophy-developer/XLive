@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../../core/media/content_unlock_store.dart';
 import '../../core/notifications/in_app_notification_store.dart';
 import '../../core/notifications/push_notification_service.dart';
 import '../../core/network/api_client.dart';
@@ -11,6 +12,7 @@ import '../../core/session/session_store.dart';
 import '../../features/auth/auth_repository.dart';
 import '../../features/auth/models/auth_models.dart';
 import '../../features/chats/chats_repository.dart';
+import '../../features/notifications/notifications_repository.dart';
 import '../../features/users/models/user_models.dart';
 import '../../features/users/users_repository.dart';
 import '../../features/wallet/wallet_repository.dart';
@@ -41,6 +43,7 @@ class AuthSession extends ChangeNotifier {
   bool _busy = false;
   int? _walletBalance;
   int _unreadTotal = 0;
+  int _notificationUnread = 0;
   bool _socketRefreshBound = false;
   bool _creatorMode = false;
 
@@ -54,6 +57,7 @@ class AuthSession extends ChangeNotifier {
   bool get creatorMode => _creatorMode;
   int? get walletBalance => _walletBalance;
   int get unreadTotal => _unreadTotal;
+  int get notificationUnread => _notificationUnread;
 
   Future<void> load() async {
     final jwt = await _client.sessionStore.readJwt();
@@ -69,12 +73,14 @@ class AuthSession extends ChangeNotifier {
         refreshProfile(),
         refreshWallet(),
         refreshUnread(),
+        refreshNotificationUnread(),
       ]);
       _bindSocketRefresh();
       InAppNotificationStore.instance.bindSocket();
       unawaited(XLiveSocketClient.instance.connectIfSignedIn());
       unawaited(PushNotificationService.instance.syncRegistration());
       unawaited(SubscriptionStore.instance.refresh());
+      unawaited(ContentUnlockStore.ensureLoaded());
     } catch (_) {
       await signOut();
       _loaded = true;
@@ -275,9 +281,11 @@ class AuthSession extends ChangeNotifier {
     unawaited(XLiveSocketClient.instance.connectIfSignedIn());
     unawaited(PushNotificationService.instance.syncRegistration());
     unawaited(SubscriptionStore.instance.refresh());
+    unawaited(ContentUnlockStore.ensureLoaded());
     await Future.wait([
       refreshWallet(),
       refreshUnread(),
+      refreshNotificationUnread(),
       () async {
         try {
           _settingsState = await _settings.getSettings();
@@ -347,10 +355,23 @@ class AuthSession extends ChangeNotifier {
     } catch (_) {}
   }
 
+  Future<void> refreshNotificationUnread() async {
+    if (!isSignedIn) {
+      _notificationUnread = 0;
+      notifyListeners();
+      return;
+    }
+    try {
+      _notificationUnread = await NotificationsRepository().unreadCount();
+      notifyListeners();
+    } catch (_) {}
+  }
+
   void _bindSocketRefresh() {
     if (_socketRefreshBound) return;
     _socketRefreshBound = true;
     XLiveSocketClient.instance.onUnreadUpdated.listen((_) => refreshUnread());
+    XLiveSocketClient.instance.onNotificationCreated.listen((_) => refreshNotificationUnread());
   }
 
   Future<XLiveUser> saveProfile({
@@ -434,12 +455,14 @@ class AuthSession extends ChangeNotifier {
     InAppNotificationStore.instance.resetForSignOut();
     XLiveSocketClient.instance.disconnect();
     SubscriptionStore.instance.clear();
+    ContentUnlockStore.clearAll();
     await _client.sessionStore.clear();
     _user = null;
     _settingsState = null;
     _identifier = null;
     _walletBalance = null;
     _unreadTotal = 0;
+    _notificationUnread = 0;
     _creatorMode = false;
     notifyListeners();
   }

@@ -14,6 +14,7 @@ import '../../features/subscriptions/models/subscription_models.dart';
 import '../../features/subscriptions/subscriptions_repository.dart';
 import '../../core/subscriptions/subscription_store.dart';
 import '../../features/wallet/models/wallet_models.dart';
+import '../../features/wallet/wallet_currency.dart';
 import '../../features/wallet/wallet_repository.dart';
 import '../app_bottom_nav.dart';
 import '../../core/network/api_friendly_messages.dart';
@@ -36,7 +37,7 @@ Widget goldCoinIcon(double size) {
 void showXlivePaymentMethodSheet(
   BuildContext context, {
   required int coins,
-  required int amountNaira,
+  required double amountUsd,
   required String fiatPrice,
   required bool appleStoreSelected,
 }) {
@@ -46,7 +47,7 @@ void showXlivePaymentMethodSheet(
     backgroundColor: Colors.transparent,
     builder: (ctx) => _PaymentMethodSheet(
       coins: coins,
-      amountNaira: amountNaira,
+      amountUsd: amountUsd,
       fiatPrice: fiatPrice,
       appleStoreSelected: appleStoreSelected,
     ),
@@ -497,13 +498,13 @@ class _CreatorStoreComboSheetState extends State<CreatorStoreComboSheet> {
 class _PaymentMethodSheet extends StatefulWidget {
   const _PaymentMethodSheet({
     required this.coins,
-    required this.amountNaira,
+    required this.amountUsd,
     required this.fiatPrice,
     required this.appleStoreSelected,
   });
 
   final int coins;
-  final int amountNaira;
+  final double amountUsd;
   final String fiatPrice;
   final bool appleStoreSelected;
 
@@ -675,7 +676,7 @@ class _PaymentMethodSheetState extends State<_PaymentMethodSheet> with WidgetsBi
     setState(() => _paying = true);
     try {
       final result = await _walletRepo.initiateFund(
-        amount: widget.amountNaira,
+        amount: widget.amountUsd < 1 ? 1 : widget.amountUsd.round().clamp(1, 100000),
         provider: provider.id,
         flow: 'redirect',
         packageId: '${widget.coins}',
@@ -1052,6 +1053,7 @@ class XliveWalletScreen extends StatefulWidget {
 
 class _XliveWalletScreenState extends State<XliveWalletScreen> with WidgetsBindingObserver {
   final _walletRepo = WalletRepository();
+  final _currencyStore = WalletCurrencyStore.instance;
   List<WalletTransaction> _transactions = const [];
   bool _loadingTransactions = false;
 
@@ -1060,6 +1062,7 @@ class _XliveWalletScreenState extends State<XliveWalletScreen> with WidgetsBindi
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     AuthSession.instance.refreshWallet();
+    _currencyStore.ensureLoaded();
     _loadTransactions();
   }
 
@@ -1073,6 +1076,7 @@ class _XliveWalletScreenState extends State<XliveWalletScreen> with WidgetsBindi
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       AuthSession.instance.refreshWallet();
+      _currencyStore.refreshRateIfStale();
       _loadTransactions();
     }
   }
@@ -1092,26 +1096,29 @@ class _XliveWalletScreenState extends State<XliveWalletScreen> with WidgetsBindi
     }
   }
 
-  static final _packs = <({int coins, int naira, String price})>[
-    (coins: 100, naira: 1500, price: '₦1,500'),
-    (coins: 300, naira: 4200, price: '₦4,200'),
-    (coins: 500, naira: 7000, price: '₦7,000'),
-    (coins: 1000, naira: 13500, price: '₦13,500'),
-    (coins: 2500, naira: 32000, price: '₦32,000'),
-    (coins: 5000, naira: 60000, price: '₦60,000'),
+  static const _packs = <({int coins, double usd})>[
+    (coins: 100, usd: 1),
+    (coins: 300, usd: 3),
+    (coins: 500, usd: 5),
+    (coins: 1000, usd: 10),
+    (coins: 2500, usd: 25),
+    (coins: 5000, usd: 50),
   ];
+
+  String _packPrice(double usd) {
+    return formatWalletMoney(usd, _currencyStore.currency, _currencyStore.usdToNgn);
+  }
 
   void _openTopUp({
     required int coins,
-    required int amountNaira,
-    required String price,
+    required double amountUsd,
     bool appleStoreSelected = false,
   }) {
     showXlivePaymentMethodSheet(
       context,
       coins: coins,
-      amountNaira: amountNaira,
-      fiatPrice: price,
+      amountUsd: amountUsd,
+      fiatPrice: _packPrice(amountUsd),
       appleStoreSelected: appleStoreSelected,
     );
   }
@@ -1119,11 +1126,12 @@ class _XliveWalletScreenState extends State<XliveWalletScreen> with WidgetsBindi
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: AuthSession.instance,
+      listenable: Listenable.merge([AuthSession.instance, _currencyStore]),
       builder: (context, _) {
         final session = AuthSession.instance;
         final balance = session.walletBalance;
         final avatarUrl = session.user?.avatarUrl;
+        final isNgn = _currencyStore.isNgn;
         return Scaffold(
           backgroundColor: Colors.white,
           body: SafeArea(
@@ -1141,6 +1149,11 @@ class _XliveWalletScreenState extends State<XliveWalletScreen> with WidgetsBindi
                       const Expanded(
                         child: Text('XLive Wallet', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: _black)),
                       ),
+                      _WalletCurrencyChip(
+                        isNgn: isNgn,
+                        onTap: () => _currencyStore.toggleCurrency(),
+                      ),
+                      const SizedBox(width: 10),
                       UserAvatar(radius: 20, imageUrl: avatarUrl),
                     ],
                   ),
@@ -1151,6 +1164,7 @@ class _XliveWalletScreenState extends State<XliveWalletScreen> with WidgetsBindi
                     onRefresh: () async {
                       await Future.wait([
                         AuthSession.instance.refreshWallet(),
+                        _currencyStore.refreshRateIfStale(force: true),
                         _loadTransactions(),
                       ]);
                     },
@@ -1162,15 +1176,16 @@ class _XliveWalletScreenState extends State<XliveWalletScreen> with WidgetsBindi
                           balance: balance,
                           onTopUp: () => _openTopUp(
                             coins: _packs.first.coins,
-                            amountNaira: _packs.first.naira,
-                            price: _packs.first.price,
+                            amountUsd: _packs.first.usd,
                           ),
                         ),
                         const SizedBox(height: 22),
                         const Text('Top up your wallet', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: _black)),
                         const SizedBox(height: 4),
                         Text(
-                          'Buy coins to send gifts, join private streams and unlock clips.',
+                          isNgn
+                              ? 'Prices in Naira. Switch to USD anytime. Live rate ≈ ₦${_currencyStore.usdToNgn.round()}/USD.'
+                              : 'Prices in US Dollars. Switch to Naira anytime. Live rate ≈ ₦${_currencyStore.usdToNgn.round()}/USD.',
                           style: TextStyle(fontSize: 13.5, color: Colors.grey.shade600, height: 1.35),
                         ),
                         const SizedBox(height: 14),
@@ -1178,11 +1193,10 @@ class _XliveWalletScreenState extends State<XliveWalletScreen> with WidgetsBindi
                           if (i > 0) const SizedBox(height: 10),
                           _WalletPackCard(
                             coins: _packs[i].coins,
-                            price: _packs[i].price,
+                            price: _packPrice(_packs[i].usd),
                             onTap: () => _openTopUp(
                               coins: _packs[i].coins,
-                              amountNaira: _packs[i].naira,
-                              price: _packs[i].price,
+                              amountUsd: _packs[i].usd,
                             ),
                           ),
                         ],
@@ -1291,6 +1305,44 @@ class _WalletTxSkeleton extends StatelessWidget {
             decoration: BoxDecoration(color: const Color(0xFFEBEBEB), borderRadius: BorderRadius.circular(6)),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _WalletCurrencyChip extends StatelessWidget {
+  const _WalletCurrencyChip({
+    required this.isNgn,
+    required this.onTap,
+  });
+
+  final bool isNgn;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFFF3EDFA),
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(10, 7, 10, 7),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.currency_exchange_rounded, size: 16, color: Colors.grey.shade800),
+              const SizedBox(width: 6),
+              Text(
+                isNgn ? '₦ NGN' : '\$ USD',
+                style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: _black),
+              ),
+              const SizedBox(width: 4),
+              Icon(Icons.swap_horiz_rounded, size: 15, color: Colors.grey.shade700),
+            ],
+          ),
+        ),
       ),
     );
   }

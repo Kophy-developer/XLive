@@ -3,9 +3,9 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
-import '../network/api_client.dart';
 import '../network/api_json.dart';
 import '../session/auth_session.dart';
+import '../../features/videos/videos_repository.dart';
 
 class SavedMediaRef {
   const SavedMediaRef({
@@ -29,7 +29,7 @@ class SavedMediaRef {
   factory SavedMediaRef.fromJson(Map<String, dynamic> json) {
     return SavedMediaRef(
       targetType: (ApiJson.pickString(json, ['targetType', 'type']) ?? 'video').trim(),
-      targetId: (ApiJson.pickString(json, ['targetId', 'id', '_id']) ?? '').trim(),
+      targetId: (ApiJson.pickString(json, ['targetId', 'id', '_id', 'videoId']) ?? '').trim(),
       savedAt: DateTime.tryParse(ApiJson.pickString(json, ['savedAt', 'createdAt']) ?? '') ?? DateTime.now().toUtc(),
     );
   }
@@ -40,43 +40,81 @@ class SavedMediaStore extends ChangeNotifier {
 
   static final SavedMediaStore instance = SavedMediaStore._();
 
-  static const _storageKeyPrefix = 'xlive_saved_media_v1_';
-  static const _settingsField = 'savedMediaIds';
+  static const _storageKeyPrefix = 'xlive_saved_media_v2_';
 
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
-  final ApiClient _client = ApiClient();
+  final VideosRepository _videos = VideosRepository();
   final List<SavedMediaRef> _items = [];
   bool _loaded = false;
-  bool _settingsSyncSupported = true;
+  Future<void>? _loadFuture;
 
   List<SavedMediaRef> get items => List.unmodifiable(_items);
 
   bool isSaved(String targetType, String targetId) {
-    final key = '$targetType:$targetId';
-    return _items.any((e) => e.key == key);
+    final id = targetId.trim();
+    if (id.isEmpty) return false;
+    return _items.any((e) => e.targetId == id);
   }
 
-  Future<void> ensureLoaded() async {
-    if (_loaded) return;
+  Future<void> ensureLoaded({bool force = false}) async {
+    if (_loaded && !force) return;
+    final existing = _loadFuture;
+    if (existing != null && !force) {
+      await existing;
+      return;
+    }
+    final future = _load(force: force);
+    _loadFuture = future;
+    try {
+      await future;
+    } finally {
+      if (identical(_loadFuture, future)) _loadFuture = null;
+    }
+  }
+
+  Future<void> _load({bool force = false}) async {
     final userId = AuthSession.instance.user?.id ?? await AuthSession.instance.sessionStore.readUserId();
     if (userId == null || userId.isEmpty) {
       _items.clear();
       _loaded = true;
+      notifyListeners();
       return;
     }
-    final local = await _readLocal(userId);
-    _items
-      ..clear()
-      ..addAll(local);
-    _loaded = true;
-    notifyListeners();
-    if (_settingsSyncSupported) {
-      try {
-        await _pullFromSettings(userId);
-      } catch (_) {
-        _settingsSyncSupported = false;
-      }
+
+    if (!_loaded || force) {
+      final local = await _readLocal(userId);
+      _items
+        ..clear()
+        ..addAll(local);
+      _loaded = true;
+      notifyListeners();
     }
+
+    try {
+      final remote = await _fetchRemoteRefs();
+      final byId = <String, SavedMediaRef>{for (final i in remote) i.targetId: i};
+      _items
+        ..clear()
+        ..addAll(byId.values.toList()..sort((a, b) => b.savedAt.compareTo(a.savedAt)));
+      await _writeLocal(userId, _items);
+      notifyListeners();
+    } catch (e) {
+      if (force) rethrow;
+    }
+  }
+
+  Future<List<SavedMediaRef>> _fetchRemoteRefs() async {
+    final videos = await _videos.listSavedVideos(page: 1, limit: 100);
+    final now = DateTime.now().toUtc();
+    return [
+      for (final v in videos)
+        if (v.id.isNotEmpty)
+          SavedMediaRef(
+            targetType: 'video',
+            targetId: v.id,
+            savedAt: now,
+          ),
+    ];
   }
 
   Future<bool> toggle({
@@ -86,7 +124,7 @@ class SavedMediaStore extends ChangeNotifier {
   }) async {
     await ensureLoaded();
     if (!canView) return false;
-    final type = targetType.trim().isEmpty ? 'video' : targetType.trim();
+    final type = _normalizeType(targetType);
     final id = targetId.trim();
     if (id.isEmpty) return false;
     if (isSaved(type, id)) {
@@ -99,34 +137,57 @@ class SavedMediaStore extends ChangeNotifier {
 
   Future<void> save(String targetType, String targetId) async {
     await ensureLoaded();
-    final type = targetType.trim().isEmpty ? 'video' : targetType.trim();
+    final type = _normalizeType(targetType);
     final id = targetId.trim();
     if (id.isEmpty) return;
     if (isSaved(type, id)) return;
-    _items.insert(0, SavedMediaRef(targetType: type, targetId: id, savedAt: DateTime.now().toUtc()));
+
+    final ref = SavedMediaRef(targetType: type, targetId: id, savedAt: DateTime.now().toUtc());
+    _items.insert(0, ref);
     notifyListeners();
-    await _persist();
+    await _persistLocal();
+
+    try {
+      await _videos.saveVideo(id);
+    } catch (_) {
+      _items.removeWhere((e) => e.targetId == id);
+      notifyListeners();
+      await _persistLocal();
+      rethrow;
+    }
   }
 
   Future<void> unsave(String targetType, String targetId) async {
     await ensureLoaded();
-    final key = '$targetType:$targetId';
-    _items.removeWhere((e) => e.key == key);
+    final id = targetId.trim();
+    if (id.isEmpty) return;
+    final removed = _items.where((e) => e.targetId == id).toList();
+    _items.removeWhere((e) => e.targetId == id);
     notifyListeners();
-    await _persist();
+    await _persistLocal();
+
+    try {
+      await _videos.unsaveVideo(id);
+    } catch (_) {
+      for (final r in removed.reversed) {
+        _items.insert(0, r);
+      }
+      notifyListeners();
+      await _persistLocal();
+      rethrow;
+    }
   }
 
-  Future<void> _persist() async {
+  String _normalizeType(String targetType) {
+    final t = targetType.trim().toLowerCase();
+    if (t.isEmpty || t == 'post' || t == 'reel' || t == 'photo') return 'video';
+    return t;
+  }
+
+  Future<void> _persistLocal() async {
     final userId = AuthSession.instance.user?.id ?? await AuthSession.instance.sessionStore.readUserId();
     if (userId == null || userId.isEmpty) return;
     await _writeLocal(userId, _items);
-    if (_settingsSyncSupported) {
-      try {
-        await _pushToSettings();
-      } catch (_) {
-        _settingsSyncSupported = false;
-      }
-    }
   }
 
   Future<List<SavedMediaRef>> _readLocal(String userId) async {
@@ -149,39 +210,6 @@ class SavedMediaStore extends ChangeNotifier {
     await _storage.write(
       key: '$_storageKeyPrefix$userId',
       value: jsonEncode([for (final i in items.take(500)) i.toJson()]),
-    );
-  }
-
-  Future<void> _pullFromSettings(String userId) async {
-    final json = await _client.apiGet('/api/x-live/settings');
-    final data = ApiJson.dataMap(json);
-    final raw = data[_settingsField] ?? json[_settingsField];
-    if (raw is! List) return;
-    final remote = raw
-        .whereType<Map>()
-        .map((e) => SavedMediaRef.fromJson(Map<String, dynamic>.from(e)))
-        .where((e) => e.targetId.isNotEmpty)
-        .toList();
-    if (remote.isEmpty) return;
-    final byKey = <String, SavedMediaRef>{
-      for (final i in _items) i.key: i,
-      for (final i in remote) i.key: i,
-    };
-    final merged = byKey.values.toList()
-      ..sort((a, b) => b.savedAt.compareTo(a.savedAt));
-    _items
-      ..clear()
-      ..addAll(merged.take(500));
-    await _writeLocal(userId, _items);
-    notifyListeners();
-  }
-
-  Future<void> _pushToSettings() async {
-    await _client.apiPatch(
-      '/api/x-live/settings',
-      body: {
-        _settingsField: [for (final i in _items.take(500)) i.toJson()],
-      },
     );
   }
 }

@@ -440,7 +440,13 @@ class _LiveInviteSheetState extends State<_LiveInviteSheet> with SingleTickerPro
                                             disabledBackgroundColor: Colors.grey.shade300,
                                             shape: const StadiumBorder(),
                                           ),
-                                          child: Text(sent ? 'Invited' : (_inviteAsCohost ? 'Invite co-host' : 'Invite')),
+                                          child: Text(
+                                            sent
+                                                ? 'Invited'
+                                                : (_inviteAsCohost
+                                                    ? 'Invite co-host'
+                                                    : (widget.allowCohost ? 'Invite guest' : 'Invite')),
+                                          ),
                                         ),
                                       );
                                     },

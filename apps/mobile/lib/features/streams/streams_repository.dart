@@ -135,6 +135,14 @@ class StreamsRepository {
     return AgoraStreamToken.fromJson(json);
   }
 
+  Future<List<Map<String, dynamic>>> listStreamChat(String streamId, {int page = 1, int limit = 50}) async {
+    final json = await _client.apiGet(
+      '/api/x-live/streams/$streamId/chat',
+      query: {'page': '$page', 'limit': '$limit'},
+    );
+    return ApiJson.listItems(json);
+  }
+
   Future<List<StreamGiftRecord>> giftHistory(String streamId, {int page = 1, int limit = 50}) async {
     final json = await _client.apiGet(
       '/api/x-live/streams/$streamId/gifts',

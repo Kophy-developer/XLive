@@ -16,6 +16,7 @@ import '../../features/groups/groups_repository.dart';
 import '../../core/widgets/connection_status_pill.dart';
 import '../../core/widgets/user_avatar.dart';
 import '../integration/call_screens.dart';
+import '../media/chat_image_prepare.dart';
 import '../media/freeform_image_crop.dart';
 import '../media/media_picker_utils.dart';
 import '../profile/user_profile_preview_screens.dart';
@@ -831,6 +832,8 @@ class _GroupChatScreenState extends State<GroupChatScreen> with WidgetsBindingOb
         if (!mounted) return;
         var path = picked.file.path;
         if (!picked.isVideo) {
+          path = await prepareChatImageForUpload(path);
+          if (!mounted) return;
           final cropped = await openFreeformImageCrop(context, path);
           if (cropped == null || !mounted) continue;
           path = cropped;

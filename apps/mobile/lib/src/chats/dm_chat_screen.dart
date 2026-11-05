@@ -29,6 +29,7 @@ import 'expandable_chat_text.dart';
 import 'emoji_reaction_sheet.dart';
 import 'forward_message_sheet.dart';
 import 'message_actions_sheet.dart';
+import '../media/chat_image_prepare.dart';
 import '../media/freeform_image_crop.dart';
 import '../media/media_picker_utils.dart';
 
@@ -483,6 +484,8 @@ class _DmChatScreenState extends State<DmChatScreen> {
         if (!mounted) return;
         var path = picked.file.path;
         if (!picked.isVideo) {
+          path = await prepareChatImageForUpload(path);
+          if (!mounted) return;
           final cropped = await openFreeformImageCrop(context, path);
           if (cropped == null || !mounted) continue;
           path = cropped;

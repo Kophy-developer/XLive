@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../../core/network/api_json.dart';
 import '../../core/notifications/in_app_notification_store.dart';
 import '../../core/notifications/push_notification_service.dart';
+import '../../core/session/auth_session.dart';
 import '../../features/notifications/notifications_repository.dart';
 import '../../features/streams/models/stream_models.dart';
 import '../chats/dm_chat_screen.dart';
@@ -43,6 +44,7 @@ class _PushInboxScreenState extends State<PushInboxScreen> {
     _store.addListener(_onStoreChanged);
     _push.addListener(_onPushChanged);
     _loadPushStatus();
+    unawaited(AuthSession.instance.refreshNotificationUnread());
     _store.hydrateFromApi().then((_) {
       if (mounted) setState(() {});
     });
@@ -114,7 +116,29 @@ class _PushInboxScreenState extends State<PushInboxScreen> {
   }
 
   Future<void> _openEvent(InAppNotification event) async {
-    final payload = event.payload;
+    var payload = Map<String, dynamic>.from(event.payload);
+    final hasDeepLink = ApiJson.pickString(payload, ['chatId', 'groupId', 'streamId', 'targetUrl']) != null;
+    final notificationId =
+        ApiJson.pickString(payload, ['notificationId', 'id']) ?? (event.id.startsWith('notif_') ? null : event.id);
+    if (!hasDeepLink && notificationId != null && notificationId.isNotEmpty) {
+      try {
+        final full = await _notificationsRepo.getNotification(notificationId);
+        if (full != null) {
+          payload = {
+            ...payload,
+            ...full.data,
+            'title': full.title,
+            if (full.body != null) 'body': full.body,
+            if (full.targetUrl != null) 'targetUrl': full.targetUrl,
+            'notificationId': full.id,
+          };
+          unawaited(_notificationsRepo.markRead(full.id).then((_) {
+            return AuthSession.instance.refreshNotificationUnread();
+          }));
+        }
+      } catch (_) {}
+    }
+    if (!mounted) return;
     switch (event.type) {
       case 'stream_invite_incoming':
         final invite = StreamInvite.fromJson(payload);
@@ -199,6 +223,43 @@ class _PushInboxScreenState extends State<PushInboxScreen> {
         }
         return;
       default:
+        final chatId = ApiJson.pickString(payload, ['chatId', 'dmChatId']);
+        final groupId = ApiJson.pickString(payload, ['groupId']);
+        final streamId = ApiJson.pickString(payload, ['streamId']);
+        if (chatId != null && chatId.isNotEmpty) {
+          Navigator.push(
+            context,
+            MaterialPageRoute<void>(
+              builder: (_) => DmChatScreen(
+                chatId: chatId,
+                peerName: ApiJson.pickString(payload, ['senderName', 'displayName', 'peerName', 'name']) ?? 'Chat',
+                peerAvatarUrl: ApiJson.pickString(payload, ['senderAvatarUrl', 'avatarUrl']) ?? '',
+                peerUserId: ApiJson.pickString(payload, ['senderId', 'userId', 'peerUserId']),
+              ),
+            ),
+          );
+          return;
+        }
+        if (groupId != null && groupId.isNotEmpty) {
+          Navigator.push(
+            context,
+            MaterialPageRoute<void>(
+              builder: (_) => GroupChatScreen(
+                groupId: groupId,
+                groupName: ApiJson.pickString(payload, ['groupName', 'name']) ?? 'Group',
+                avatarUrl: ApiJson.pickString(payload, ['groupAvatarUrl', 'avatarUrl']) ?? '',
+              ),
+            ),
+          );
+          return;
+        }
+        if (streamId != null && streamId.isNotEmpty) {
+          Navigator.pushNamed(context, '/live/during', arguments: LiveDuringArgs(streamId: streamId));
+          return;
+        }
+        if (ApiJson.pickString(payload, ['paymentId']) != null || event.type.contains('wallet')) {
+          Navigator.pushNamed(context, '/wallet/xlive');
+        }
         return;
     }
   }

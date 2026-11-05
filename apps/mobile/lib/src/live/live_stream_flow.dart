@@ -1245,7 +1245,9 @@ class _LiveSetupScreenState extends State<LiveSetupScreen> with SingleTickerProv
                                             ? 'Go Live'
                                             : (_private && _inviteAsCohost)
                                                 ? 'Go Live · Invite co-host'
-                                                : 'Go Live · Invite',
+                                                : _private
+                                                    ? 'Go Live · Invite guest'
+                                                    : 'Go Live · Invite',
                                         style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16),
                                       ),
                               ),
@@ -1661,6 +1663,7 @@ class _LiveDuringScreenState extends State<LiveDuringScreen> with WidgetsBinding
         _startPerSecondBilling(stream.pricePerMinute);
       }
       _bindSocket(id);
+      unawaited(_loadStreamChatHistory(id));
       if (_isHost) {
         XLiveSocketClient.instance.requestStreamViewers(id);
       }
@@ -2036,12 +2039,40 @@ class _LiveDuringScreenState extends State<LiveDuringScreen> with WidgetsBinding
     );
   }
 
+  Future<void> _loadStreamChatHistory(String streamId) async {
+    try {
+      final rows = await _streamsRepo.listStreamChat(streamId, page: 1, limit: 50);
+      if (!mounted || rows.isEmpty) return;
+      final existing = <String>{
+        for (final c in _chatLog) '${c.sender}|${c.content}',
+      };
+      for (final row in rows.reversed) {
+        final parsed = _parseStreamChatEvent(row);
+        if (parsed.content.isEmpty) continue;
+        final key = '${parsed.sender}|${parsed.content}';
+        if (existing.contains(key)) continue;
+        existing.add(key);
+        _pushComment(sender: parsed.sender, content: parsed.content);
+      }
+    } catch (_) {}
+  }
+
   ({String sender, String content}) _parseStreamChatEvent(Map<String, dynamic> event) {
     final comment = event['comment'];
     Map<String, dynamic> map = event;
     if (comment is Map) map = Map<String, dynamic>.from(comment);
-    final sender = map['senderName']?.toString() ?? map['userId']?.toString() ?? 'Viewer';
-    var content = map['content']?.toString() ?? '';
+    final message = map['message'];
+    if (message is Map) map = Map<String, dynamic>.from(message);
+    final senderObj = map['sender'] ?? map['user'] ?? map['user'];
+    String? senderFromObj;
+    if (senderObj is Map) {
+      senderFromObj = senderObj['displayName']?.toString() ??
+          senderObj['username']?.toString() ??
+          senderObj['name']?.toString();
+    }
+    final sender =
+        map['senderName']?.toString() ?? map['userName']?.toString() ?? senderFromObj ?? map['userId']?.toString() ?? 'Viewer';
+    var content = map['content']?.toString() ?? map['text']?.toString() ?? map['body']?.toString() ?? '';
     final mediaType = (map['mediaType']?.toString() ?? '').toLowerCase();
     final mediaUrl = map['mediaUrl']?.toString() ?? '';
     if (content.trim().isEmpty && mediaUrl.isNotEmpty) {

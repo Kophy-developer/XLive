@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../network/api_json.dart';
 import '../session/auth_session.dart';
 import '../socket/xlive_socket_client.dart';
+import '../../features/notifications/notifications_repository.dart';
 import '../../features/streams/streams_repository.dart';
 import 'notification_persistence.dart';
 
@@ -112,6 +113,24 @@ class InAppNotificationStore extends ChangeNotifier {
             'title': invite.streamTitle,
             'hostName': invite.hostName,
             'status': invite.status,
+            'hydrated': true,
+          },
+        );
+      }
+    } catch (_) {}
+    try {
+      final inbox = await NotificationsRepository().listInbox(page: 1, limit: 40);
+      for (final n in inbox) {
+        _ingest(
+          n.type.isEmpty ? 'inbox' : n.type,
+          {
+            'id': n.id,
+            'notificationId': n.id,
+            'title': n.title,
+            if (n.body != null) 'body': n.body,
+            'readAt': n.readAt,
+            if (n.targetUrl != null) 'targetUrl': n.targetUrl,
+            ...n.data,
             'hydrated': true,
           },
         );
