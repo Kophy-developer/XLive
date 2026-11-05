@@ -1,4 +1,4 @@
-import { getSettings, updateSettings } from "./api/misc";
+import { listSavedVideos, saveVideo, unsaveVideo } from "./api/misc";
 
 export type SavedMediaRef = {
   targetType: string;
@@ -6,8 +6,7 @@ export type SavedMediaRef = {
   savedAt: string;
 };
 
-const LOCAL_PREFIX = "xlive_saved_media_v1_";
-const SETTINGS_FIELD = "savedMediaIds";
+const LOCAL_PREFIX = "xlive_saved_media_v2_";
 
 function localKey(userId: string) {
   return `${LOCAL_PREFIX}${userId}`;
@@ -34,13 +33,30 @@ function writeLocal(userId: string, items: SavedMediaRef[]) {
   }
 }
 
+function normalizeType(targetType: string) {
+  const t = (targetType || "video").trim().toLowerCase();
+  if (!t || t === "post" || t === "reel" || t === "photo") return "video";
+  return t;
+}
+
+function parseRemoteItem(row: Record<string, unknown>): SavedMediaRef | null {
+  const targetId = String(row.targetId || row.id || row._id || row.videoId || "").trim();
+  if (!targetId) return null;
+  return {
+    targetType: normalizeType(String(row.targetType || row.type || "video")),
+    targetId,
+    savedAt: String(row.savedAt || row.createdAt || new Date().toISOString()),
+  };
+}
+
 export function listSavedLocal(userId: string) {
   return readLocal(userId);
 }
 
 export function isSavedLocal(userId: string, targetType: string, targetId: string) {
-  const key = `${targetType}:${targetId}`;
-  return readLocal(userId).some((e) => `${e.targetType}:${e.targetId}` === key);
+  const id = targetId.trim();
+  if (!id) return false;
+  return readLocal(userId).some((e) => e.targetId === id);
 }
 
 export async function toggleSavedMedia(
@@ -50,50 +66,51 @@ export async function toggleSavedMedia(
   canView: boolean
 ) {
   if (!canView || !userId || !targetId) return false;
-  const type = targetType || "video";
+  const type = normalizeType(targetType);
+  const id = targetId.trim();
   let items = readLocal(userId);
-  const key = `${type}:${targetId}`;
-  const exists = items.some((e) => `${e.targetType}:${e.targetId}` === key);
+  const exists = items.some((e) => e.targetId === id);
   if (exists) {
-    items = items.filter((e) => `${e.targetType}:${e.targetId}` !== key);
-  } else {
-    items = [
-      { targetType: type, targetId, savedAt: new Date().toISOString() },
-      ...items,
-    ].slice(0, 500);
+    items = items.filter((e) => e.targetId !== id);
+    writeLocal(userId, items);
+    try {
+      await unsaveVideo(id);
+    } catch (err) {
+      writeLocal(userId, [
+        { targetType: type, targetId: id, savedAt: new Date().toISOString() },
+        ...items,
+      ]);
+      throw err;
+    }
+    return false;
   }
+  items = [{ targetType: type, targetId: id, savedAt: new Date().toISOString() }, ...items].slice(0, 500);
   writeLocal(userId, items);
   try {
-    await updateSettings({ [SETTINGS_FIELD]: items });
-  } catch {
-    /* settings may strip unknown fields; local still works */
+    await saveVideo(id);
+  } catch (err) {
+    writeLocal(
+      userId,
+      items.filter((e) => e.targetId !== id)
+    );
+    throw err;
   }
-  return !exists;
+  return true;
+}
+
+export async function syncSavedFromApi(userId: string): Promise<SavedMediaRef[]> {
+  if (!userId) return [];
+  const remoteRows = await listSavedVideos(1, 100);
+  const remote = remoteRows
+    .map((row) => parseRemoteItem(row))
+    .filter((e): e is SavedMediaRef => !!e);
+  const map = new Map<string, SavedMediaRef>();
+  for (const e of remote) map.set(e.targetId, e);
+  const merged = Array.from(map.values()).sort((a, b) => b.savedAt.localeCompare(a.savedAt));
+  writeLocal(userId, merged);
+  return merged;
 }
 
 export async function syncSavedFromSettings(userId: string) {
-  if (!userId) return readLocal(userId);
-  try {
-    const res = await getSettings();
-    const data = (res as { data?: Record<string, unknown> })?.data ?? (res as Record<string, unknown>);
-    const raw = data?.[SETTINGS_FIELD];
-    if (!Array.isArray(raw)) return readLocal(userId);
-    const remote = raw
-      .filter((e): e is Record<string, unknown> => !!e && typeof e === "object")
-      .map((e) => ({
-        targetType: String(e.targetType || e.type || "video"),
-        targetId: String(e.targetId || e.id || ""),
-        savedAt: String(e.savedAt || e.createdAt || new Date().toISOString()),
-      }))
-      .filter((e) => e.targetId);
-    const map = new Map<string, SavedMediaRef>();
-    for (const e of [...readLocal(userId), ...remote]) {
-      map.set(`${e.targetType}:${e.targetId}`, e);
-    }
-    const merged = Array.from(map.values()).sort((a, b) => b.savedAt.localeCompare(a.savedAt));
-    writeLocal(userId, merged);
-    return merged;
-  } catch {
-    return readLocal(userId);
-  }
+  return syncSavedFromApi(userId);
 }

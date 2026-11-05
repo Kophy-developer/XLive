@@ -29,15 +29,29 @@ function normalizeLiveRecord(raw: Record<string, unknown>): LiveStream {
   const nested =
     raw.stream && typeof raw.stream === "object" ? (raw.stream as Record<string, unknown>) : raw;
   const host = hostFromRecord({ ...nested, ...raw });
+  const isPrivate =
+    String(nested.visibility ?? raw.visibility ?? "").toLowerCase() === "private" ||
+    Boolean(nested.isPrivate ?? raw.isPrivate);
+  const rawPrice =
+    nested.pricePerMinute ?? nested.privateStreamPricePerMinute ?? nested.coinsPerMinute ?? raw.pricePerMinute;
+  const priceNum = typeof rawPrice === "number" ? rawPrice : Number(rawPrice ?? 0);
+  const pricePerMinute = Number.isFinite(priceNum) && priceNum > 0 ? Math.floor(priceNum) : 0;
   return {
     id: String(nested._id ?? nested.id ?? raw._id ?? raw.id ?? ""),
     title: String(nested.title ?? raw.title ?? "Live stream"),
     caption: (nested.caption ?? raw.caption) ? String(nested.caption ?? raw.caption) : undefined,
     hostId: host.hostId,
     host: host.host,
-    thumbnailUrl: (nested.thumbnailUrl ?? nested.previewUrl ?? nested.coverUrl ?? raw.thumbnailUrl) as string | undefined,
+    thumbnailUrl: (nested.thumbnailUrl ?? nested.previewUrl ?? nested.coverUrl ?? raw.thumbnailUrl) as
+      | string
+      | undefined,
     replayUrl: (nested.replayUrl ?? raw.replayUrl) ? String(nested.replayUrl ?? raw.replayUrl) : undefined,
-    viewerCount: typeof nested.viewerCount === "number" ? nested.viewerCount : typeof raw.viewerCount === "number" ? raw.viewerCount : 0,
+    viewerCount:
+      typeof nested.viewerCount === "number"
+        ? nested.viewerCount
+        : typeof raw.viewerCount === "number"
+          ? raw.viewerCount
+          : 0,
     isLive: nested.status === "live" || Boolean(nested.isLive ?? raw.isLive),
     startedAt: nested.startedAt ? String(nested.startedAt) : raw.startedAt ? String(raw.startedAt) : undefined,
     createdAt: nested.createdAt ? String(nested.createdAt) : raw.createdAt ? String(raw.createdAt) : undefined,
@@ -48,7 +62,9 @@ function normalizeLiveRecord(raw: Record<string, unknown>): LiveStream {
     visibility: String(nested.visibility ?? raw.visibility ?? "public"),
     joinPolicy: nested.joinPolicy ? String(nested.joinPolicy) : undefined,
     chatPolicy: nested.chatPolicy ? String(nested.chatPolicy) : undefined,
-    isPrivate: String(nested.visibility ?? raw.visibility ?? "").toLowerCase() === "private" || Boolean(nested.isPrivate ?? raw.isPrivate),
+    isPrivate,
+    pricePerMinute,
+    isPaid: isPrivate && pricePerMinute > 0,
   };
 }
 
@@ -302,6 +318,29 @@ export async function uploadStreamChatFile(
 
 export async function getStreamGifts(streamId: string) {
   return api.get(`/api/x-live/streams/${streamId}/gifts`);
+}
+
+export async function listStreamChat(streamId: string, page = 1, limit = 50): Promise<Record<string, unknown>[]> {
+  const res = await api.get<Record<string, unknown>>(
+    withQuery(`/api/x-live/streams/${streamId}/chat`, { page, limit })
+  );
+  const data = (res && typeof res === "object" && "data" in res && res.data && typeof res.data === "object"
+    ? res.data
+    : res) as Record<string, unknown>;
+  const list = Array.isArray(data?.docs)
+    ? data.docs
+    : Array.isArray(data?.messages)
+    ? data.messages
+    : Array.isArray(data?.items)
+    ? data.items
+    : Array.isArray(data?.chat)
+    ? data.chat
+    : Array.isArray(data)
+    ? data
+    : Array.isArray(res)
+    ? res
+    : [];
+  return list as Record<string, unknown>[];
 }
 
 export async function uploadReplay(streamId: string, file: File) {

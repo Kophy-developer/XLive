@@ -118,7 +118,42 @@ export const socketEvents = {
   groupCallLeft: "group_call_left",
   groupCallEnded: "group_call_ended",
   notificationCreated: "notification_created",
+  billingTick: "stream:billingTick",
+  viewerMuted: "stream:viewerMuted",
+  viewerUnmuted: "stream:viewerUnmuted",
+  talkBackGranted: "stream:talkBackGranted",
+  talkBackRevoked: "stream:talkBackRevoked",
+  viewerRemoved: "viewer_removed",
 } as const;
+
+export async function grantTalkBack(streamId: string, userId: string) {
+  const res = await emitSocketAck<Record<string, unknown>>("stream:grantTalkBack", { streamId, userId });
+  return res?.ok === true;
+}
+
+export async function revokeTalkBack(streamId: string, userId: string) {
+  const res = await emitSocketAck<Record<string, unknown>>("stream:revokeTalkBack", { streamId, userId });
+  return res?.ok === true;
+}
+
+export async function muteStreamViewer(streamId: string, userId: string) {
+  const res = await emitSocketAck<Record<string, unknown>>("stream:muteViewer", { streamId, userId });
+  return res?.ok === true;
+}
+
+export async function unmuteStreamViewer(streamId: string, userId: string) {
+  const res = await emitSocketAck<Record<string, unknown>>("stream:unmuteViewer", { streamId, userId });
+  return res?.ok === true;
+}
+
+export async function removeStreamViewer(streamId: string, userId: string) {
+  const res = await emitSocketAck<Record<string, unknown>>("remove_viewer", { streamId, userId });
+  return res?.ok === true;
+}
+
+export async function requestStreamViewers(streamId: string) {
+  await emitSocketAck("stream:getViewers", { streamId }).catch(() => {});
+}
 
 export function emitDmCallStart(
   chatId: string,

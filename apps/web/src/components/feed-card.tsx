@@ -13,6 +13,7 @@ import { isFeedItemGone, keepVisibleFeedItems, markFeedItemGone, subscribeGoneMe
 import { AccountChip } from "@/components/account-chip";
 import { DeletePostDialog } from "@/components/delete-post-dialog";
 import { isCreatorLiveNow } from "@/lib/live-now";
+import { isUnlockedLocal } from "@/lib/unlocked-media";
 
 export function FeedCard({
   item,
@@ -146,7 +147,7 @@ export function FeedCard({
             </span>
           ) : null}
 
-          {item.needsPurchase || (item.price && item.price > 0) ? (
+          {!isUnlockedLocal(me?.id, item.id) && (item.needsPurchase || (item.price && item.price > 0)) ? (
             <span className="flex items-center gap-1 rounded-full bg-amber-500/90 px-2 py-0.5 text-[10px] font-bold text-black shadow-md backdrop-blur-sm">
               <Lock className="h-2.5 w-2.5" /> {item.price ?? ""} coins
             </span>

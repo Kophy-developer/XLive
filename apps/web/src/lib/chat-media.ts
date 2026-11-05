@@ -237,11 +237,39 @@ export function chatDocumentLabel(msg: ChatMessage) {
   return "Document attachment";
 }
 
+function looksLikeHeicFile(file: File) {
+  const name = file.name.toLowerCase();
+  const type = (file.type || "").toLowerCase();
+  return type.includes("heic") || type.includes("heif") || name.endsWith(".heic") || name.endsWith(".heif");
+}
+
+export async function prepareChatImageFile(file: File): Promise<File> {
+  if (!looksLikeHeicFile(file) && file.type && file.type !== "image/heic" && file.type !== "image/heif") {
+    return file;
+  }
+  try {
+    const bitmap = await createImageBitmap(file);
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return file;
+    ctx.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+    if (!blob) return file;
+    const base = file.name.replace(/\.[^.]+$/, "") || "photo";
+    return new File([blob], `${base}.jpg`, { type: "image/jpeg", lastModified: Date.now() });
+  } catch {
+    return file;
+  }
+}
+
 export function pendingFromFiles(list: FileList | File[], kind: "media" | "document"): PendingChatFile[] {
   const files = Array.from(list);
   const out: PendingChatFile[] = [];
   for (const file of files) {
-    const isImage = file.type.startsWith("image/");
+    const isImage = file.type.startsWith("image/") || looksLikeHeicFile(file);
     const isVideo = file.type.startsWith("video/");
     if (kind === "media" && !isImage && !isVideo) continue;
     if (kind === "document" && (isImage || isVideo)) continue;

@@ -207,7 +207,13 @@ export function LiveInviteSheet({
                       )}
                     >
                       <UserPlus className="h-3.5 w-3.5" />
-                      {already ? "Invited" : inviteAsCohost && allowCohost ? "Invite co-host" : "Invite"}
+                      {already
+                        ? "Invited"
+                        : inviteAsCohost && allowCohost
+                          ? "Invite co-host"
+                          : allowCohost
+                            ? "Invite guest"
+                            : "Invite"}
                     </button>
                   </li>
                 );

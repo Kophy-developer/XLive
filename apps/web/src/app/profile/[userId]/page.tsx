@@ -3,7 +3,7 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AuthGuard, PageHeader } from "@/components/auth-guard";
 import { Button } from "@/components/ui/button";
 import { FeedGrid } from "@/components/feed-card";
@@ -132,6 +132,8 @@ export default function ProfilePage() {
   const [activeTab, setActiveTab] = useState<ProfileTab>("posts");
   const [contentFilter, setContentFilter] = useState<ContentFilter>("all");
   const [followingState, setFollowingState] = useState(false);
+  const [followBusy, setFollowBusy] = useState(false);
+  const [followError, setFollowError] = useState("");
   const [reportOpen, setReportOpen] = useState(false);
 
   const { data: profile, refetch: refetchProfile } = useQuery({
@@ -191,6 +193,13 @@ export default function ProfilePage() {
     refetchInterval: isMe ? false : 30_000,
   });
 
+  useEffect(() => {
+    if (isMe) return;
+    if (profile && typeof profile.isFollowing === "boolean") {
+      setFollowingState(profile.isFollowing);
+    }
+  }, [isMe, profile, targetId]);
+
   async function handleSignOut() {
     await signOut();
     setUser(null);
@@ -199,17 +208,23 @@ export default function ProfilePage() {
   }
 
   async function toggleFollow() {
-    if (!targetId) return;
-    if (followingState) {
-      await unfollowUser(targetId);
-      setFollowingState(false);
-    } else {
-      await followUser(targetId);
-      setFollowingState(true);
+    if (!targetId || followBusy) return;
+    const next = !followingState;
+    setFollowBusy(true);
+    setFollowError("");
+    setFollowingState(next);
+    try {
+      if (next) await followUser(targetId);
+      else await unfollowUser(targetId);
+      await refetchProfile();
+      void followersQuery.refetch();
+      void followingQuery.refetch();
+    } catch (e) {
+      setFollowingState(!next);
+      setFollowError(e instanceof Error ? e.message : "Could not update follow");
+    } finally {
+      setFollowBusy(false);
     }
-    refetchProfile();
-    followersQuery.refetch();
-    followingQuery.refetch();
   }
 
   const user = profile ?? me;
@@ -262,25 +277,29 @@ export default function ProfilePage() {
               Log out
             </button>
           ) : (
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                onClick={toggleFollow}
-                className={
-                  followingState
-                    ? "rounded-full border border-white/20 bg-white/5 text-xs font-semibold text-white"
-                    : "rounded-full brand-gradient text-xs font-semibold text-white shadow-md shadow-brand-purple/20"
-                }
-              >
-                {followingState ? "Following" : "Follow"}
-              </Button>
-              <button
-                type="button"
-                onClick={() => setReportOpen(true)}
-                className="rounded-full border border-white/15 bg-white/5 px-3.5 py-1.5 text-xs font-semibold text-zinc-200 transition hover:border-white/30 hover:bg-white/10"
-              >
-                Report
-              </button>
+            <div className="flex flex-col items-end gap-1">
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  disabled={followBusy}
+                  onClick={toggleFollow}
+                  className={
+                    followingState
+                      ? "rounded-full border border-white/20 bg-white/5 text-xs font-semibold text-white disabled:opacity-60"
+                      : "rounded-full brand-gradient text-xs font-semibold text-white shadow-md shadow-brand-purple/20 disabled:opacity-60"
+                  }
+                >
+                  {followBusy ? "…" : followingState ? "Following" : "Follow"}
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => setReportOpen(true)}
+                  className="rounded-full border border-white/15 bg-white/5 px-3.5 py-1.5 text-xs font-semibold text-zinc-200 transition hover:border-white/30 hover:bg-white/10"
+                >
+                  Report
+                </button>
+              </div>
+              {followError ? <p className="max-w-[220px] text-right text-[10px] font-medium text-red-400">{followError}</p> : null}
             </div>
           )
         }

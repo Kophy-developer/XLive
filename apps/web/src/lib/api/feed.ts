@@ -52,6 +52,7 @@ export function normalizePublicUser(raw: unknown): XLiveUser {
     isCreator: Boolean(d.isCreator ?? d.creator ?? root.isCreator) || String(d.role ?? root.role ?? "") === "creator",
     followerCount: pickMetric(d.followerCount, d.followersCount, d.followers),
     followingCount: pickMetric(d.followingCount, d.following),
+    isFollowing: d.isFollowing === true || root.isFollowing === true,
   };
 }
 

@@ -20,6 +20,7 @@ const items = [
 export function BottomNav() {
   const pathname = usePathname();
   const unread = useAuthStore((s) => s.unreadTotal);
+  const notificationUnread = useAuthStore((s) => s.notificationUnread);
   const setCreateOpen = useUiStore((s) => s.setCreateSheetOpen);
 
   return (
@@ -40,7 +41,16 @@ export function BottomNav() {
             );
           }
           const active = item.match.some((m) => pathname.startsWith(m));
-          const badge = item.href === "/chats" && unread > 0 ? (unread > 99 ? "99+" : unread) : null;
+          const badge =
+            item.href === "/chats" && unread > 0
+              ? unread > 99
+                ? "99+"
+                : unread
+              : item.href === "/notifications" && notificationUnread > 0
+                ? notificationUnread > 99
+                  ? "99+"
+                  : notificationUnread
+                : null;
           return (
             <Link
               key={item.href}
@@ -69,6 +79,7 @@ export function SideNav() {
   const pathname = usePathname();
   const router = useRouter();
   const unread = useAuthStore((s) => s.unreadTotal);
+  const notificationUnread = useAuthStore((s) => s.notificationUnread);
   const setCreateOpen = useUiStore((s) => s.setCreateSheetOpen);
   const setUser = useAuthStore((s) => s.setUser);
   const setAuthenticated = useAuthStore((s) => s.setAuthenticated);
@@ -93,7 +104,12 @@ export function SideNav() {
           { href: "/profile/me", label: "Profile", icon: User, match: ["/profile"] },
         ].map((item) => {
           const active = item.match.some((m) => pathname.startsWith(m));
-          const badge = item.href === "/chats" && unread > 0 ? unread : null;
+          const badge =
+            item.href === "/chats" && unread > 0
+              ? unread
+              : item.href === "/notifications" && notificationUnread > 0
+                ? notificationUnread
+                : null;
           return (
             <Link
               key={item.href}

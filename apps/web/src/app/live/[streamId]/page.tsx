@@ -11,15 +11,35 @@ import type {
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { AuthGuard } from "@/components/auth-guard";
-import { endStream, getStream, getStreamToken, uploadStreamChatFile } from "@/lib/api/streams";
-import { getGiftCatalog } from "@/lib/api/misc";
-import { emitSocketAck, emitSocket, onSocketEvent, socketEvents } from "@/lib/socket";
+import { endStream, getStream, getStreamToken, listStreamChat, uploadStreamChatFile } from "@/lib/api/streams";
+import {
+  getGiftCatalog,
+  getWallet,
+  joinAckSkipsBilling,
+  lookupMySubscriptions,
+} from "@/lib/api/misc";
+import {
+  emitSocketAck,
+  emitSocket,
+  onSocketEvent,
+  socketEvents,
+  grantTalkBack,
+  revokeTalkBack,
+  muteStreamViewer,
+  unmuteStreamViewer,
+  removeStreamViewer,
+  requestStreamViewers,
+} from "@/lib/socket";
 import { useAuthStore } from "@/lib/stores";
-import { cn } from "@/lib/utils";
+import { cloudinaryUrl, cn } from "@/lib/utils";
 import { LiveChatOpenButton, LiveChatPanel, type LiveChatMessage } from "@/components/live-chat-panel";
 import { LiveGiftSheet } from "@/components/live-gift-sheet";
 import { LiveGiftHistorySheet } from "@/components/live-gift-history-sheet";
 import { LiveInviteSheet } from "@/components/live-invite-sheet";
+import {
+  LiveManageViewersSheet,
+  type LiveViewerRow,
+} from "@/components/live-manage-viewers-sheet";
 import {
   captionTextForRole,
   emitTranscriptChunk,
@@ -28,6 +48,7 @@ import {
   normalizeCaptionPayload,
 } from "@/lib/live-captions";
 import {
+  AudioLines,
   FlipHorizontal2,
   Gift,
   Languages,
@@ -154,6 +175,27 @@ function parseChatMessage(d: unknown, streamId: string): LiveChatMessage | null 
   };
 }
 
+function chatMessageKey(m: LiveChatMessage) {
+  return `${m.userId || ""}|${m.userName || ""}|${m.content}|${m.mediaUrl || ""}`;
+}
+
+function mergeChatHistory(history: LiveChatMessage[], live: LiveChatMessage[]) {
+  const seen = new Set(history.map(chatMessageKey));
+  const extras = live.filter((m) => {
+    const key = chatMessageKey(m);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return [...history, ...extras];
+}
+
+function appendChatUnique(prev: LiveChatMessage[], next: LiveChatMessage) {
+  const key = chatMessageKey(next);
+  if (prev.some((m) => chatMessageKey(m) === key)) return prev;
+  return [...prev, next];
+}
+
 function remoteScreenShareActive(users: IAgoraRTCRemoteUser[]) {
   return users.some((user) => {
     const track = user.videoTrack?.getMediaStreamTrack?.();
@@ -181,6 +223,44 @@ function parseViewerCount(d: unknown): number | null {
   return null;
 }
 
+function parseViewerRows(d: unknown): LiveViewerRow[] {
+  if (!d || typeof d !== "object") return [];
+  const o = d as Record<string, unknown>;
+  const raw = o.viewers ?? o.users ?? o.items ?? o.docs;
+  if (!Array.isArray(raw)) return [];
+  const rows: LiveViewerRow[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const map = item as Record<string, unknown>;
+    const user =
+      (map.user && typeof map.user === "object" ? map.user : null) as Record<string, unknown> | null;
+    const id = String(map.userId ?? map.id ?? user?.id ?? user?._id ?? "");
+    if (!id) continue;
+    rows.push({
+      id,
+      name: String(
+        map.displayName ?? map.username ?? user?.displayName ?? user?.username ?? "Viewer"
+      ),
+      avatarUrl: (map.avatarUrl ?? user?.avatarUrl ?? user?.avatar) as string | undefined,
+      muted: map.muted === true || map.isMuted === true,
+      talkBack:
+        map.talkBack === true || map.hasTalkBack === true || map.talkBackGranted === true,
+    });
+  }
+  return rows;
+}
+
+function eventUserId(d: unknown): string {
+  if (!d || typeof d !== "object") return "";
+  const o = d as Record<string, unknown>;
+  return String(o.userId ?? o.id ?? "");
+}
+
+function eventStreamId(d: unknown): string {
+  if (!d || typeof d !== "object") return "";
+  return String((d as Record<string, unknown>).streamId ?? "");
+}
+
 function LiveStreamContent() {
   const params = useParams();
   const searchParams = useSearchParams();
@@ -204,6 +284,8 @@ function LiveStreamContent() {
   const [chatInput, setChatInput] = useState("");
   const [messages, setMessages] = useState<LiveChatMessage[]>([]);
   const [joined, setJoined] = useState(false);
+  const [joinError, setJoinError] = useState("");
+  const [joinAttempt, setJoinAttempt] = useState(0);
   const [remoteUsers, setRemoteUsers] = useState<IAgoraRTCRemoteUser[]>([]);
   const [chatMode, setChatMode] = useState<"open" | "expanded" | "closed">("closed");
   const [giftOpen, setGiftOpen] = useState(false);
@@ -219,6 +301,45 @@ function LiveStreamContent() {
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [captionText, setCaptionText] = useState("");
   const captionClearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [manageOpen, setManageOpen] = useState(false);
+  const [viewers, setViewers] = useState<LiveViewerRow[]>([]);
+  const [busyViewerId, setBusyViewerId] = useState<string | null>(null);
+  const [talkBackActive, setTalkBackActive] = useState(false);
+  const [talkBackMutedByHost, setTalkBackMutedByHost] = useState(false);
+  const [billingEnabled, setBillingEnabled] = useState(false);
+  const [isSubscriberViewer, setIsSubscriberViewer] = useState(false);
+  const [sessionSeconds, setSessionSeconds] = useState(0);
+  const [sessionCoins, setSessionCoins] = useState(0);
+  const [billingToast, setBillingToast] = useState("");
+
+  const sessionSecondsRef = useRef(0);
+  const sessionCoinsRef = useRef(0);
+  const initialBalanceRef = useRef(0);
+  const billingEnabledRef = useRef(false);
+  const talkBackActiveRef = useRef(false);
+  const endingForBalanceRef = useRef(false);
+  const talkBackIdsRef = useRef<Set<string>>(new Set());
+  const mutedTalkBackIdsRef = useRef<Set<string>>(new Set());
+
+  const mergeViewerFlags = useCallback((rows: LiveViewerRow[]) => {
+    return rows.map((row) => ({
+      ...row,
+      talkBack: row.talkBack === true || talkBackIdsRef.current.has(row.id),
+      muted:
+        row.muted === true ||
+        (talkBackIdsRef.current.has(row.id) && mutedTalkBackIdsRef.current.has(row.id)),
+    }));
+  }, []);
+
+  const syncTalkBackSetsFromRows = useCallback((rows: LiveViewerRow[]) => {
+    for (const row of rows) {
+      if (row.talkBack) talkBackIdsRef.current.add(row.id);
+      if (row.muted && (row.talkBack || talkBackIdsRef.current.has(row.id))) {
+        mutedTalkBackIdsRef.current.add(row.id);
+      }
+    }
+  }, []);
 
   const showCaption = useCallback((text: string) => {
     if (!text || !captionsOn) return;
@@ -247,8 +368,18 @@ function LiveStreamContent() {
   const isCohost = urlRole === "cohost";
   const isBroadcaster = isHost || isCohost;
   const isPrivateStream = Boolean(stream?.isPrivate);
+  const isPaidStream = Boolean(stream?.isPaid && (stream?.pricePerMinute ?? 0) > 0);
+  const pricePerMinute = stream?.pricePerMinute ?? 0;
   const agoraRole: "host" | "audience" = isBroadcaster ? "host" : "audience";
   const showGift = Boolean(user && !isHost && giftCatalog.length);
+
+  useEffect(() => {
+    talkBackActiveRef.current = talkBackActive;
+  }, [talkBackActive]);
+
+  useEffect(() => {
+    billingEnabledRef.current = billingEnabled;
+  }, [billingEnabled]);
 
   useEffect(() => {
     if (window.matchMedia("(min-width: 1024px)").matches) setChatMode("open");
@@ -299,11 +430,86 @@ function LiveStreamContent() {
   }
 
   useEffect(() => {
-    if (!stream) return;
+    if (!stream?.id) return;
     let isCleanedUp = false;
+    setJoinError("");
+    setJoined(false);
+    setTalkBackActive(false);
+    setTalkBackMutedByHost(false);
+    setBillingEnabled(false);
+    setIsSubscriberViewer(false);
+    setSessionSeconds(0);
+    setSessionCoins(0);
+    setViewers([]);
+    sessionSecondsRef.current = 0;
+    sessionCoinsRef.current = 0;
+    initialBalanceRef.current = 0;
+    billingEnabledRef.current = false;
+    endingForBalanceRef.current = false;
+    talkBackIdsRef.current.clear();
+    mutedTalkBackIdsRef.current.clear();
 
     async function initAgora() {
+      let joinedSocketRoom = false;
       try {
+        let billThisViewer = false;
+        let knownSubscriber = false;
+        let subsLookupOk = false;
+
+        if (isPaidStream && !isBroadcaster) {
+          const [wallet, subsLookup] = await Promise.all([
+            getWallet().catch(() => null),
+            lookupMySubscriptions(),
+          ]);
+          if (isCleanedUp) return;
+
+          subsLookupOk = subsLookup.ok;
+          knownSubscriber = Boolean(
+            subsLookup.ok && streamHostId && subsLookup.creatorIds.includes(streamHostId)
+          );
+          if (knownSubscriber) {
+            setIsSubscriberViewer(true);
+          } else if (subsLookup.ok) {
+            const balance = wallet?.balance ?? 0;
+            initialBalanceRef.current = balance;
+            if (balance <= 0) {
+              setJoinError("Not enough coins to join this private stream.");
+              return;
+            }
+          }
+        }
+
+        const joinAck = await emitSocketAck<Record<string, unknown>>("join_stream", {
+          streamId,
+        }).catch(() => null);
+        if (isCleanedUp) return;
+
+        if (!joinAck || joinAck.ok !== true) {
+          const msg = String(
+            (joinAck && (joinAck.error || joinAck.message)) ||
+              "Unable to join stream. Please retry."
+          );
+          const lower = msg.toLowerCase();
+          setJoinError(
+            lower.includes("balance") || lower.includes("insufficient")
+              ? "Not enough coins to join this private stream."
+              : msg
+          );
+          return;
+        }
+        joinedSocketRoom = true;
+
+        const joinedCount = parseViewerCount(joinAck);
+        if (joinedCount != null) setViewerCount((c) => Math.max(c, joinedCount));
+
+        if (isPaidStream && !isBroadcaster) {
+          if (joinAckSkipsBilling(joinAck)) {
+            knownSubscriber = true;
+            setIsSubscriberViewer(true);
+          }
+          billThisViewer = !knownSubscriber && subsLookupOk;
+        }
+
         const tokenData = await getStreamToken(streamId, agoraRole);
         const AgoraRTC = (await import("agora-rtc-sdk-ng")).default;
         AgoraRTC.setLogLevel(3);
@@ -386,18 +592,46 @@ function LiveStreamContent() {
 
         if (!isCleanedUp) {
           setJoined(true);
+          setJoinError("");
           setViewerCount((n) => Math.max(n, agoraRole === "audience" ? 1 : n));
+          if (billThisViewer) {
+            setBillingEnabled(true);
+            billingEnabledRef.current = true;
+          }
+          if (isHost) {
+            void requestStreamViewers(streamId);
+          }
         }
       } catch (err) {
         console.error("Agora live join failed", err);
+        if (joinedSocketRoom) {
+          emitSocketAck("leave_stream", { streamId }).catch(() => {});
+          joinedSocketRoom = false;
+        }
+        if (!isCleanedUp) {
+          const msg = (err as Error)?.message || "Could not connect to the live stream.";
+          const lower = msg.toLowerCase();
+          setJoinError(
+            lower.includes("balance") || lower.includes("insufficient")
+              ? "Not enough coins to join this private stream."
+              : msg
+          );
+        }
       }
     }
 
     initAgora();
-    emitSocketAck("join_stream", { streamId })
-      .then((res) => {
-        const n = parseViewerCount(res);
-        if (n != null) setViewerCount((c) => Math.max(c, n));
+
+    void listStreamChat(streamId, 1, 50)
+      .then((rows) => {
+        if (isCleanedUp || !Array.isArray(rows) || rows.length === 0) return;
+        const history: LiveChatMessage[] = [];
+        for (const row of rows) {
+          const parsed = parseChatMessage(row, streamId);
+          if (parsed) history.push(parsed);
+        }
+        if (!history.length) return;
+        setMessages((prev) => mergeChatHistory(history, prev));
       })
       .catch(() => {});
 
@@ -413,7 +647,7 @@ function LiveStreamContent() {
       onSocketEvent(socketEvents.streamViewers, applyViewers),
       onSocketEvent<unknown>(socketEvents.streamChat, (d) => {
         const parsed = parseChatMessage(d, streamId);
-        if (parsed) setMessages((m) => [...m, parsed]);
+        if (parsed) setMessages((m) => appendChatUnique(m, parsed));
       }),
       onSocketEvent(socketEvents.streamEnded, () => {
         router.push(`/live/${streamId}/summary`);
@@ -446,7 +680,12 @@ function LiveStreamContent() {
     return () => {
       isCleanedUp = true;
       offs.forEach((o) => o());
-      emitSocketAck("leave_stream", { streamId }).catch(() => {});
+      const leavePayload: Record<string, unknown> = { streamId };
+      if (billingEnabledRef.current) {
+        leavePayload.durationSeconds = sessionSecondsRef.current;
+        leavePayload.chargedCoins = Math.ceil(sessionCoinsRef.current);
+      }
+      emitSocketAck("leave_stream", leavePayload).catch(() => {});
 
       if (localAudioTrackRef.current) {
         localAudioTrackRef.current.stop();
@@ -468,7 +707,18 @@ function LiveStreamContent() {
         clientRef.current = null;
       }
     };
-  }, [streamId, agoraRole, isBroadcaster, isHost, stream, router, showCaption]);
+  }, [
+    stream?.id,
+    streamId,
+    agoraRole,
+    isBroadcaster,
+    isHost,
+    isPaidStream,
+    streamHostId,
+    router,
+    showCaption,
+    joinAttempt,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -490,8 +740,213 @@ function LiveStreamContent() {
     return stop;
   }, [joined, isHost, stream?.captionsEnabled, stream?.saveEnabled, streamId, user?.language, showCaption]);
 
+  useEffect(() => {
+    if (!joined || !billingEnabled || isBroadcaster || pricePerMinute <= 0) return;
+    const rate = pricePerMinute / 60;
+    const timer = window.setInterval(() => {
+      if (endingForBalanceRef.current) return;
+      sessionSecondsRef.current += 1;
+      sessionCoinsRef.current = sessionSecondsRef.current * rate;
+      setSessionSeconds(sessionSecondsRef.current);
+      setSessionCoins(sessionCoinsRef.current);
+      const remaining = initialBalanceRef.current - sessionCoinsRef.current;
+      if (remaining <= 0) {
+        endingForBalanceRef.current = true;
+        window.clearInterval(timer);
+        setBillingToast("Private stream ended — your balance ran out.");
+        router.push("/live");
+      }
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [joined, billingEnabled, isBroadcaster, pricePerMinute, router]);
+
+  const enableTalkBackMic = useCallback(async () => {
+    const client = clientRef.current;
+    if (!client || isBroadcaster) return;
+    try {
+      await client.setClientRole("host");
+      if (!localAudioTrackRef.current) {
+        const AgoraRTC = (await import("agora-rtc-sdk-ng")).default;
+        const mic = await AgoraRTC.createMicrophoneAudioTrack();
+        localAudioTrackRef.current = mic;
+        await client.publish([mic]);
+      } else {
+        await localAudioTrackRef.current.setEnabled(true);
+      }
+      setTalkBackActive(true);
+      setTalkBackMutedByHost(false);
+      setIsMuted(false);
+    } catch (err) {
+      console.error("Talk-back enable failed", err);
+    }
+  }, [isBroadcaster]);
+
+  const disableTalkBackMic = useCallback(async () => {
+    const client = clientRef.current;
+    const mic = localAudioTrackRef.current;
+    if (mic) {
+      try {
+        await client?.unpublish(mic);
+      } catch {}
+      mic.stop();
+      mic.close();
+      localAudioTrackRef.current = null;
+    }
+    try {
+      await client?.setClientRole("audience");
+    } catch {}
+    setTalkBackActive(false);
+    setTalkBackMutedByHost(false);
+    setIsMuted(false);
+  }, []);
+
+  const setTalkBackMicEnabled = useCallback(async (enabled: boolean) => {
+    if (!localAudioTrackRef.current || !talkBackActiveRef.current) return;
+    await localAudioTrackRef.current.setEnabled(enabled);
+    setTalkBackMutedByHost(!enabled);
+    setIsMuted(!enabled);
+  }, []);
+
+  useEffect(() => {
+    if (!joined || !streamId) return;
+    const me = user?.id ?? "";
+
+    const applyViewersList = (d: unknown) => {
+      if (eventStreamId(d) && eventStreamId(d) !== streamId) return;
+      const rows = parseViewerRows(d);
+      if (rows.length || Array.isArray((d as Record<string, unknown>)?.viewers)) {
+        syncTalkBackSetsFromRows(rows);
+        setViewers(mergeViewerFlags(rows));
+      }
+      const n = parseViewerCount(d);
+      if (n != null) setViewerCount(n);
+    };
+
+    const offs = [
+      onSocketEvent(socketEvents.streamViewers, applyViewersList),
+      onSocketEvent("stream_viewers", applyViewersList),
+      onSocketEvent<unknown>(socketEvents.billingTick, (d) => {
+        if (!isPrivateStream) return;
+        if (eventStreamId(d) && eventStreamId(d) !== streamId) return;
+        const o = (d && typeof d === "object" ? d : {}) as Record<string, unknown>;
+        const amount = o.charged ?? o.amount ?? o.coins;
+        const ppm = o.pricePerMinute;
+        if (amount != null) {
+          const n = typeof amount === "number" ? amount : Number(amount);
+          if (Number.isFinite(n) && n > 0 && billingEnabledRef.current) {
+            sessionCoinsRef.current = Math.max(sessionCoinsRef.current, n);
+            setSessionCoins(sessionCoinsRef.current);
+          }
+          const suffix = ppm != null ? ` (${ppm} coins/min)` : "";
+          setBillingToast(`Billed: ${amount} coins${suffix}`);
+          window.setTimeout(() => setBillingToast(""), 3200);
+          void getWallet().catch(() => null);
+        }
+      }),
+      onSocketEvent<unknown>(socketEvents.viewerRemoved, (d) => {
+        if (eventStreamId(d) && eventStreamId(d) !== streamId) return;
+        const removedId = eventUserId(d);
+        if (!removedId || !me || removedId !== me) return;
+        const reason = String((d as Record<string, unknown>)?.reason ?? "");
+        setBillingToast(
+          reason === "billing_failed"
+            ? "Removed from stream — insufficient wallet balance"
+            : isCohost
+              ? "You were removed as co-host"
+              : "You were removed from the stream"
+        );
+        router.push("/live");
+      }),
+      onSocketEvent<unknown>(socketEvents.viewerMuted, (d) => {
+        if (!isPrivateStream) return;
+        if (eventStreamId(d) && eventStreamId(d) !== streamId) return;
+        const mutedId = eventUserId(d);
+        if (mutedId) mutedTalkBackIdsRef.current.add(mutedId);
+        if (mutedId && me && mutedId === me && talkBackActiveRef.current) {
+          void setTalkBackMicEnabled(false);
+          setBillingToast("Host muted your mic");
+          window.setTimeout(() => setBillingToast(""), 2800);
+        }
+        setViewers((prev) =>
+          mergeViewerFlags(prev.map((v) => (v.id === mutedId ? { ...v, muted: true } : v)))
+        );
+      }),
+      onSocketEvent<unknown>(socketEvents.viewerUnmuted, (d) => {
+        if (!isPrivateStream) return;
+        if (eventStreamId(d) && eventStreamId(d) !== streamId) return;
+        const unmutedId = eventUserId(d);
+        if (unmutedId) mutedTalkBackIdsRef.current.delete(unmutedId);
+        if (unmutedId && me && unmutedId === me && talkBackActiveRef.current) {
+          void setTalkBackMicEnabled(true);
+          setBillingToast("You can speak again");
+          window.setTimeout(() => setBillingToast(""), 2800);
+        }
+        setViewers((prev) =>
+          mergeViewerFlags(prev.map((v) => (v.id === unmutedId ? { ...v, muted: false } : v)))
+        );
+      }),
+      onSocketEvent<unknown>(socketEvents.talkBackGranted, (d) => {
+        if (!isPrivateStream) return;
+        if (eventStreamId(d) && eventStreamId(d) !== streamId) return;
+        const uid = eventUserId(d);
+        if (uid) {
+          talkBackIdsRef.current.add(uid);
+          mutedTalkBackIdsRef.current.delete(uid);
+        }
+        if (uid && me && uid === me) {
+          void enableTalkBackMic();
+          setBillingToast("Talk-back enabled");
+          window.setTimeout(() => setBillingToast(""), 2800);
+        }
+        setViewers((prev) => {
+          const exists = prev.some((v) => v.id === uid);
+          const next = exists
+            ? prev.map((v) => (v.id === uid ? { ...v, talkBack: true, muted: false } : v))
+            : uid
+              ? [...prev, { id: uid, name: "Viewer", talkBack: true, muted: false }]
+              : prev;
+          return mergeViewerFlags(next);
+        });
+      }),
+      onSocketEvent<unknown>(socketEvents.talkBackRevoked, (d) => {
+        if (!isPrivateStream) return;
+        if (eventStreamId(d) && eventStreamId(d) !== streamId) return;
+        const uid = eventUserId(d);
+        if (uid) {
+          talkBackIdsRef.current.delete(uid);
+          mutedTalkBackIdsRef.current.delete(uid);
+        }
+        if (uid && me && uid === me) {
+          void disableTalkBackMic();
+          setBillingToast("Talk-back ended");
+          window.setTimeout(() => setBillingToast(""), 2800);
+        }
+        setViewers((prev) =>
+          mergeViewerFlags(
+            prev.map((v) => (v.id === uid ? { ...v, talkBack: false, muted: false } : v))
+          )
+        );
+      }),
+    ];
+
+    return () => offs.forEach((o) => o());
+  }, [
+    joined,
+    streamId,
+    user?.id,
+    isPrivateStream,
+    isCohost,
+    router,
+    enableTalkBackMic,
+    disableTalkBackMic,
+    setTalkBackMicEnabled,
+    mergeViewerFlags,
+    syncTalkBackSetsFromRows,
+  ]);
+
   async function toggleMute() {
     if (!localAudioTrackRef.current) return;
+    if (talkBackActive && talkBackMutedByHost) return;
     const next = !isMuted;
     await localAudioTrackRef.current.setEnabled(!next);
     setIsMuted(next);
@@ -579,11 +1034,83 @@ function LiveStreamContent() {
     router.push("/live");
   }
 
+  async function onToggleViewerMute(viewer: LiveViewerRow) {
+    const hasTalkBack = viewer.talkBack || talkBackIdsRef.current.has(viewer.id);
+    if (!hasTalkBack) return;
+    const isMutedNow = viewer.muted || mutedTalkBackIdsRef.current.has(viewer.id);
+    setBusyViewerId(viewer.id);
+    try {
+      const ok = isMutedNow
+        ? await unmuteStreamViewer(streamId, viewer.id)
+        : await muteStreamViewer(streamId, viewer.id);
+      if (ok) {
+        if (isMutedNow) mutedTalkBackIdsRef.current.delete(viewer.id);
+        else mutedTalkBackIdsRef.current.add(viewer.id);
+        setViewers((prev) =>
+          mergeViewerFlags(
+            prev.map((v) => (v.id === viewer.id ? { ...v, muted: !isMutedNow, talkBack: true } : v))
+          )
+        );
+      }
+    } finally {
+      setBusyViewerId(null);
+    }
+  }
+
+  async function onToggleViewerTalkBack(viewer: LiveViewerRow) {
+    const granted = viewer.talkBack || talkBackIdsRef.current.has(viewer.id);
+    setBusyViewerId(viewer.id);
+    try {
+      const ok = granted
+        ? await revokeTalkBack(streamId, viewer.id)
+        : await grantTalkBack(streamId, viewer.id);
+      if (ok) {
+        if (granted) {
+          talkBackIdsRef.current.delete(viewer.id);
+          mutedTalkBackIdsRef.current.delete(viewer.id);
+        } else {
+          talkBackIdsRef.current.add(viewer.id);
+        }
+        setViewers((prev) =>
+          mergeViewerFlags(
+            prev.map((v) =>
+              v.id === viewer.id
+                ? { ...v, talkBack: !granted, muted: granted ? false : v.muted }
+                : v
+            )
+          )
+        );
+      }
+    } finally {
+      setBusyViewerId(null);
+    }
+  }
+
+  async function onRemoveViewer(viewerId: string) {
+    setBusyViewerId(viewerId);
+    try {
+      const ok = await removeStreamViewer(streamId, viewerId);
+      if (ok) {
+        talkBackIdsRef.current.delete(viewerId);
+        mutedTalkBackIdsRef.current.delete(viewerId);
+        setViewers((prev) => prev.filter((v) => v.id !== viewerId));
+      }
+    } finally {
+      setBusyViewerId(null);
+    }
+  }
+
   function sendChat() {
     if (!chatInput.trim()) return;
     const content = chatInput.trim();
     emitSocket("stream_chat_message", { streamId, content });
-    setMessages((m) => [...m, { content, userName: user?.username ? `@${user.username}` : "@you" }]);
+    setMessages((m) =>
+      appendChatUnique(m, {
+        content,
+        userId: user?.id,
+        userName: user?.username ? `@${user.username}` : "@you",
+      })
+    );
     setChatInput("");
   }
 
@@ -604,16 +1131,16 @@ function LiveStreamContent() {
         mediaType: uploaded.mediaType,
         fileName: uploaded.fileName,
       });
-      setMessages((m) => [
-        ...m,
-        {
+      setMessages((m) =>
+        appendChatUnique(m, {
           content,
+          userId: user?.id,
           userName: user?.username ? `@${user.username}` : "@you",
           mediaUrl: uploaded.mediaUrl || undefined,
           mediaType: uploaded.mediaType,
           fileName: uploaded.fileName,
-        },
-      ]);
+        })
+      );
       setChatInput("");
     } catch (err) {
       console.error("Live chat upload failed", err);
@@ -666,12 +1193,60 @@ function LiveStreamContent() {
           onClose={() => setInviteOpen(false)}
         />
       ) : null}
+      {isHost ? (
+        <LiveManageViewersSheet
+          open={manageOpen}
+          onClose={() => setManageOpen(false)}
+          viewers={viewers}
+          talkBackControls={isPrivateStream}
+          busyId={busyViewerId}
+          onToggleMute={(v) => void onToggleViewerMute(v)}
+          onToggleTalkBack={(v) => void onToggleViewerTalkBack(v)}
+          onRemove={(id) => void onRemoveViewer(id)}
+        />
+      ) : null}
 
       <div className="relative min-h-0 flex-1 p-2 md:p-3">
         {!joined ? (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-neutral-950">
-            <div className="h-10 w-10 animate-pulse rounded-full brand-gradient" />
-            <p className="font-sans text-xs text-white/70">Connecting to live stream…</p>
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-neutral-950 px-6 text-center">
+            {stream?.thumbnailUrl || stream?.host?.avatarUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={cloudinaryUrl(stream.thumbnailUrl || stream.host?.avatarUrl || "")}
+                alt=""
+                className="absolute inset-0 h-full w-full object-cover opacity-30 blur-2xl"
+              />
+            ) : null}
+            <div className="relative z-10 flex max-w-sm flex-col items-center gap-3">
+              {joinError ? (
+                <>
+                  <p className="font-sans text-sm font-semibold text-white">{joinError}</p>
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setJoinAttempt((n) => n + 1)}
+                      className="rounded-xl brand-gradient px-4 py-2 text-xs font-bold text-white"
+                    >
+                      Retry
+                    </button>
+                    {joinError.toLowerCase().includes("coins") || joinError.toLowerCase().includes("balance") ? (
+                      <button
+                        type="button"
+                        onClick={() => router.push("/wallet")}
+                        className="rounded-xl border border-white/15 bg-white/10 px-4 py-2 text-xs font-bold text-white"
+                      >
+                        Top up wallet
+                      </button>
+                    ) : null}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="h-10 w-10 animate-pulse rounded-full brand-gradient" />
+                  <p className="font-sans text-xs text-white/70">Connecting to live stream…</p>
+                </>
+              )}
+            </div>
           </div>
         ) : null}
 
@@ -680,6 +1255,11 @@ function LiveStreamContent() {
             <span className="flex items-center gap-1.5 rounded-full bg-red-600 px-3 py-1 font-sans text-xs font-bold text-white shadow-lg shadow-red-600/30">
               <Radio className="h-3 w-3 animate-pulse" /> LIVE
             </span>
+            {isPrivateStream ? (
+              <span className="rounded-full border border-amber-400/40 bg-amber-500/20 px-2.5 py-1 font-sans text-[11px] font-bold text-amber-200">
+                Private
+              </span>
+            ) : null}
             <span className="flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-1 font-sans text-xs font-semibold text-white/90 backdrop-blur-md">
               <Users className="h-3.5 w-3.5" /> {viewerCount}
             </span>
@@ -693,6 +1273,17 @@ function LiveStreamContent() {
                 {isHost ? "Host" : "Co-Host"}
               </span>
             )}
+            {isSubscriberViewer ? (
+              <span className="rounded-full border border-brand-purple/40 bg-brand-purple/25 px-2.5 py-1 font-sans text-[11px] font-bold text-brand-purple">
+                Subscriber
+              </span>
+            ) : null}
+            {talkBackActive ? (
+              <span className="flex items-center gap-1 rounded-full border border-emerald-400/40 bg-emerald-500/20 px-2.5 py-1 font-sans text-[11px] font-bold text-emerald-200">
+                <AudioLines className="h-3 w-3" />
+                Talk-back
+              </span>
+            ) : null}
             {stream?.title ? (
               <span className="hidden max-w-[40vw] truncate rounded-full bg-black/50 px-3 py-1 font-sans text-xs font-semibold text-white/90 sm:inline">
                 {stream.title}
@@ -832,12 +1423,65 @@ function LiveStreamContent() {
           </div>
         ) : null}
 
+        {billingEnabled && pricePerMinute > 0 ? (
+          <div className="absolute inset-x-0 top-16 z-30 flex justify-center px-4">
+            <div className="rounded-2xl border border-amber-400/30 bg-black/70 px-3.5 py-2 text-center backdrop-blur-md">
+              <p className="font-sans text-[11px] font-semibold tabular-nums text-amber-100">
+                {formatElapsed(sessionSeconds)} · {sessionCoins.toFixed(1)} coins spent ({pricePerMinute}/min)
+              </p>
+            </div>
+          </div>
+        ) : null}
+
+        {billingToast ? (
+          <div className="absolute inset-x-0 top-28 z-40 flex justify-center px-4">
+            <p className="rounded-2xl border border-white/10 bg-black/80 px-3.5 py-2 text-center font-sans text-xs font-semibold text-white shadow-lg backdrop-blur-md">
+              {billingToast}
+            </p>
+          </div>
+        ) : null}
+
         <div className="absolute bottom-[88px] right-4 z-30 flex flex-col items-end gap-2 md:bottom-6">
           {chatMode === "closed" ? <LiveChatOpenButton onClick={() => setChatMode("open")} /> : null}
         </div>
 
+        {talkBackActive && !isBroadcaster ? (
+          <div className="absolute bottom-[88px] left-1/2 z-30 flex -translate-x-1/2 items-center gap-2 rounded-2xl border border-white/10 bg-black/75 px-3 py-2 backdrop-blur-xl md:bottom-6">
+            <button
+              type="button"
+              onClick={() => void toggleMute()}
+              disabled={talkBackMutedByHost}
+              className={cn(
+                "flex h-11 w-11 items-center justify-center rounded-xl border transition active:scale-95",
+                isMuted || talkBackMutedByHost
+                  ? "border-red-500/40 bg-red-500/20 text-red-400"
+                  : "border-white/10 bg-white/10 text-white hover:bg-white/20",
+                talkBackMutedByHost && "opacity-60"
+              )}
+              aria-label={isMuted ? "Unmute" : "Mute"}
+              title={talkBackMutedByHost ? "Muted by host" : isMuted ? "Unmute" : "Mute"}
+            >
+              {isMuted || talkBackMutedByHost ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+            </button>
+          </div>
+        ) : null}
+
         {isBroadcaster && (
           <div className="absolute bottom-[88px] left-1/2 z-30 flex -translate-x-1/2 items-center gap-2 rounded-2xl border border-white/10 bg-black/75 px-3 py-2 backdrop-blur-xl md:bottom-6 md:gap-3 md:px-4">
+            {isHost ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setManageOpen(true);
+                  void requestStreamViewers(streamId);
+                }}
+                className="flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-white/10 text-white transition hover:bg-white/20 active:scale-95"
+                aria-label="Manage viewers"
+                title="Manage viewers"
+              >
+                <Users className="h-5 w-5" />
+              </button>
+            ) : null}
             {isHost ? (
               <button
                 type="button"

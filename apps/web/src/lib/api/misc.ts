@@ -14,6 +14,65 @@ export async function getWallet(): Promise<WalletInfo> {
   };
 }
 
+export type MySubscriptionsLookup =
+  | { ok: true; creatorIds: string[] }
+  | { ok: false };
+
+export async function listMySubscribedCreatorIds(): Promise<string[]> {
+  const lookup = await lookupMySubscriptions();
+  return lookup.ok ? lookup.creatorIds : [];
+}
+
+export async function lookupMySubscriptions(): Promise<MySubscriptionsLookup> {
+  try {
+    const res = await api.get<Record<string, unknown>>(
+      withQuery("/api/x-live/subscriptions/mine", { page: 1, limit: 100 })
+    );
+    const data = (res && typeof res === "object" && "data" in res && res.data && typeof res.data === "object"
+      ? res.data
+      : res) as Record<string, unknown>;
+    const list = Array.isArray(data?.docs)
+      ? data.docs
+      : Array.isArray(data?.subscriptions)
+        ? data.subscriptions
+        : Array.isArray(data)
+          ? data
+          : [];
+    const ids: string[] = [];
+    for (const row of list as Record<string, unknown>[]) {
+      const creator =
+        (row.creator && typeof row.creator === "object" ? row.creator : null) as Record<string, unknown> | null;
+      const id = String(row.creatorId ?? creator?.id ?? creator?._id ?? "");
+      const status = String(row.status ?? "active").toLowerCase();
+      if (id && (!status || status === "active" || status === "trialing" || status === "paid")) {
+        ids.push(id);
+      }
+    }
+    return { ok: true, creatorIds: ids };
+  } catch {
+    return { ok: false };
+  }
+}
+
+export function joinAckSkipsBilling(ack: Record<string, unknown> | null | undefined): boolean {
+  if (!ack || typeof ack !== "object") return false;
+  const nested =
+    ack.data && typeof ack.data === "object" ? (ack.data as Record<string, unknown>) : ack;
+  if (nested.isSubscriber === true || nested.subscriber === true || nested.hasSubscription === true) {
+    return true;
+  }
+  if (nested.skipBilling === true || nested.billing === false || nested.billable === false) {
+    return true;
+  }
+  if (nested.freeAccess === true || nested.isFree === true || nested.access === "free") {
+    return true;
+  }
+  if (nested.billingMode === "none" || nested.billingMode === "subscriber") {
+    return true;
+  }
+  return false;
+}
+
 export async function getTransactions(page = 1) {
   const res = await api.get<Record<string, unknown>>(withQuery("/api/x-live/wallet/transactions", { page }));
   const data = (res && typeof res === "object" && "data" in res && res.data && typeof res.data === "object"
@@ -193,6 +252,31 @@ export async function getNotifications(page = 1, limit = 30) {
   return { notifications: list, unreadCount };
 }
 
+export async function getNotificationUnreadCount(): Promise<number> {
+  const res = await api.get<Record<string, unknown>>("/api/x-live/notifications/unread-count");
+  const data = (res && typeof res === "object" && "data" in res && res.data && typeof res.data === "object"
+    ? res.data
+    : res) as Record<string, unknown>;
+  const raw =
+    data?.count ??
+    data?.unreadCount ??
+    data?.total ??
+    data?.unread ??
+    (typeof res === "object" && res && "count" in res ? (res as { count?: unknown }).count : 0);
+  const n = typeof raw === "number" ? raw : Number(raw ?? 0);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+export async function getNotification(id: string): Promise<NotificationItem | null> {
+  if (!id) return null;
+  const res = await api.get<Record<string, unknown>>(`/api/x-live/notifications/${id}`);
+  const data = (res && typeof res === "object" && "data" in res && res.data && typeof res.data === "object"
+    ? res.data
+    : res) as Record<string, unknown>;
+  if (!data || typeof data !== "object") return null;
+  return data as NotificationItem;
+}
+
 export async function markNotificationRead(id: string) {
   return api.post(`/api/x-live/notifications/${id}/read`);
 }
@@ -354,6 +438,45 @@ export async function createClip(payload: Record<string, unknown>) {
 export async function getVideo(videoId: string): Promise<Record<string, unknown>> {
   const res = await api.get<Record<string, unknown>>(`/api/x-live/videos/${videoId}`, session.isAuthenticated());
   return (res && typeof res === "object" && "data" in res && res.data ? res.data : res) as Record<string, unknown>;
+}
+
+export async function unlockVideo(videoId: string) {
+  return api.post(`/api/x-live/videos/${videoId}/unlock`);
+}
+
+export async function purchaseCollectibleClip(clipId: string) {
+  return api.post(`/api/x-live/clips/${clipId}/purchase`);
+}
+
+export async function saveVideo(videoId: string) {
+  return api.post(`/api/x-live/videos/${videoId}/save`);
+}
+
+export async function unsaveVideo(videoId: string) {
+  return api.delete(`/api/x-live/videos/${videoId}/save`);
+}
+
+export async function listSavedVideos(page = 1, limit = 50): Promise<Record<string, unknown>[]> {
+  const res = await api.get<Record<string, unknown>>(
+    withQuery("/api/x-live/videos/saved", { page, limit })
+  );
+  const data = (res && typeof res === "object" && "data" in res && res.data && typeof res.data === "object"
+    ? res.data
+    : res) as Record<string, unknown>;
+  const list = Array.isArray(data?.docs)
+    ? data.docs
+    : Array.isArray(data?.videos)
+    ? data.videos
+    : Array.isArray(data?.saved)
+    ? data.saved
+    : Array.isArray(data?.items)
+    ? data.items
+    : Array.isArray(data)
+    ? data
+    : Array.isArray(res)
+    ? res
+    : [];
+  return list as Record<string, unknown>[];
 }
 
 export async function getClip(clipId: string): Promise<Record<string, unknown>> {

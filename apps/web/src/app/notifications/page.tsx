@@ -6,7 +6,14 @@ import { useState } from "react";
 import { AuthGuard } from "@/components/auth-guard";
 import { AccountChip } from "@/components/account-chip";
 import { signOut } from "@/lib/api/auth";
-import { getNotifications, markAllNotificationsRead, markNotificationRead } from "@/lib/api/misc";
+import {
+  getNotification,
+  getNotificationUnreadCount,
+  getNotifications,
+  markAllNotificationsRead,
+  markNotificationRead,
+} from "@/lib/api/misc";
+import { useAuthStore } from "@/lib/stores";
 import type { NotificationItem } from "@/lib/types";
 import { cloudinaryUrl, cn } from "@/lib/utils";
 import { ArrowLeft, Bell, Wallet, Radio, Phone, MessageCircle } from "lucide-react";
@@ -25,6 +32,7 @@ function formatTimeAgo(dateStr?: string) {
 
 export default function NotificationsPage() {
   const router = useRouter();
+  const setNotificationUnread = useAuthStore((s) => s.setNotificationUnread);
   const [unreadFilter, setUnreadFilter] = useState(false);
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
 
@@ -36,30 +44,51 @@ export default function NotificationsPage() {
 
   const rawItems = data?.notifications ?? [];
 
+  useQuery({
+    queryKey: ["notifications-unread-count"],
+    queryFn: async () => {
+      const count = await getNotificationUnreadCount();
+      setNotificationUnread(count);
+      return count;
+    },
+    refetchInterval: 20000,
+  });
+
   const items = rawItems.filter((n) => {
     const isUnread = !n.readAt && !n.read && !readIds.has(n.id);
     if (unreadFilter) return isUnread;
     return true;
   });
 
+  async function refreshUnreadBadge() {
+    try {
+      const count = await getNotificationUnreadCount();
+      setNotificationUnread(count);
+    } catch {
+      /* keep last badge */
+    }
+  }
+
   async function handleMarkAllRead() {
     try {
       await markAllNotificationsRead();
       const allIds = new Set(rawItems.map((n) => n.id));
       setReadIds(allIds);
+      setNotificationUnread(0);
       refetch();
     } catch {
     }
   }
 
-  async function handleNotificationClick(n: NotificationItem) {
-    if (!n.readAt && !n.read) {
-      setReadIds((prev) => new Set(prev).add(n.id));
-      markNotificationRead(n.id).catch(() => {});
+  async function resolveAndOpen(n: NotificationItem) {
+    let item = n;
+    const d0 = (item.data ?? {}) as Record<string, unknown>;
+    if (!d0.chatId && !d0.groupId && !d0.streamId && !item.targetUrl && item.id) {
+      const full = await getNotification(item.id).catch(() => null);
+      if (full) item = full;
     }
-
-    const d = (n.data ?? {}) as Record<string, unknown>;
-    const type = String(n.type ?? d.type ?? "");
+    const d = (item.data ?? {}) as Record<string, unknown>;
+    const type = String(item.type ?? d.type ?? "");
 
     if (d.chatId) {
       router.push(`/chats/${d.chatId}`);
@@ -69,9 +98,19 @@ export default function NotificationsPage() {
       router.push(`/live/${d.streamId}`);
     } else if (type.includes("wallet") || d.paymentId) {
       router.push("/wallet");
-    } else if (n.targetUrl) {
-      router.push(n.targetUrl);
+    } else if (item.targetUrl) {
+      router.push(item.targetUrl);
     }
+  }
+
+  async function handleNotificationClick(n: NotificationItem) {
+    if (!n.readAt && !n.read) {
+      setReadIds((prev) => new Set(prev).add(n.id));
+      markNotificationRead(n.id)
+        .then(() => refreshUnreadBadge())
+        .catch(() => {});
+    }
+    await resolveAndOpen(n);
   }
 
   return (

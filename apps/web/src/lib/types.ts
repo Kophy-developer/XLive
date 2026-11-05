@@ -11,6 +11,7 @@ export type XLiveUser = {
   isCreator?: boolean;
   followerCount?: number;
   followingCount?: number;
+  isFollowing?: boolean;
   dob?: string;
   gender?: string;
   language?: string;
@@ -123,6 +124,8 @@ export type LiveStream = {
   joinPolicy?: string;
   chatPolicy?: string;
   isPrivate?: boolean;
+  pricePerMinute?: number;
+  isPaid?: boolean;
 };
 
 export type StreamInvite = {

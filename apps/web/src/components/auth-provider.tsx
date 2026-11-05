@@ -5,10 +5,11 @@ import { useAuthStore } from "@/lib/stores";
 import { session } from "@/lib/session";
 import { getMe } from "@/lib/api/auth";
 import { getUnreadSummary } from "@/lib/api/chats";
+import { getNotificationUnreadCount } from "@/lib/api/misc";
 import { connectSocket, disconnectSocket, onSocketEvent, socketEvents } from "@/lib/socket";
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const { setUser, setLoading, setAuthenticated, setUnreadTotal } = useAuthStore();
+  const { setUser, setLoading, setAuthenticated, setUnreadTotal, setNotificationUnread } = useAuthStore();
 
   useEffect(() => {
     let cancelled = false;
@@ -17,21 +18,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!session.isAuthenticated()) {
         setAuthenticated(false);
         setUser(null);
+        setNotificationUnread(0);
         setLoading(false);
         return;
       }
       try {
-        const [user, unread] = await Promise.all([getMe(), getUnreadSummary().catch(() => ({ total: 0 }))]);
+        const [user, unread, notifUnread] = await Promise.all([
+          getMe(),
+          getUnreadSummary().catch(() => ({ total: 0 })),
+          getNotificationUnreadCount().catch(() => 0),
+        ]);
         if (cancelled) return;
         setUser(user);
         setAuthenticated(true);
         setUnreadTotal(unread.total ?? 0);
+        setNotificationUnread(notifUnread);
         connectSocket();
       } catch {
         if (cancelled) return;
         session.clear();
         setAuthenticated(false);
         setUser(null);
+        setNotificationUnread(0);
         disconnectSocket();
       } finally {
         if (!cancelled) setLoading(false);
@@ -42,7 +50,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [setAuthenticated, setLoading, setUnreadTotal, setUser]);
+  }, [setAuthenticated, setLoading, setNotificationUnread, setUnreadTotal, setUser]);
 
   useEffect(() => {
     const off = onSocketEvent<{ total?: number }>(socketEvents.unreadUpdated, (data) => {
@@ -50,6 +58,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     return off;
   }, [setUnreadTotal]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function refreshNotifBadge() {
+      try {
+        const count = await getNotificationUnreadCount();
+        if (!cancelled) setNotificationUnread(count);
+      } catch {
+        /* keep last known badge */
+      }
+    }
+    const offCreated = onSocketEvent(socketEvents.notificationCreated, () => {
+      void refreshNotifBadge();
+    });
+    const interval = window.setInterval(() => {
+      if (!session.isAuthenticated()) return;
+      void refreshNotifBadge();
+    }, 45000);
+    return () => {
+      cancelled = true;
+      offCreated();
+      window.clearInterval(interval);
+    };
+  }, [setNotificationUnread]);
 
   return <>{children}</>;
 }

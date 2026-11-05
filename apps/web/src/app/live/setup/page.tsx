@@ -560,6 +560,8 @@ export default function GoLiveSetupPage() {
                 "+ Go Live"
               ) : visibility === "private" && inviteAsCohosts ? (
                 "+ Go Live · Invite co-host"
+              ) : visibility === "private" ? (
+                "+ Go Live · Invite guest"
               ) : (
                 "+ Go Live · Invite"
               )}

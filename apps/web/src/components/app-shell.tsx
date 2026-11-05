@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 import { Bell } from "lucide-react";
 import { refreshLiveNowCreators } from "@/lib/live-now";
+import { useAuthStore } from "@/lib/stores";
 import { AccountChip } from "./account-chip";
 import { BottomNav, SideNav } from "./app-nav";
 import { CreateSheet } from "./create-sheet";
@@ -18,6 +19,7 @@ function isLiveRoom(pathname: string) {
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const liveRoom = isLiveRoom(pathname);
+  const notificationUnread = useAuthStore((s) => s.notificationUnread);
 
   useEffect(() => {
     void refreshLiveNowCreators();
@@ -37,8 +39,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <img src="/logo.png" alt="XLive" className="h-8 w-auto object-contain" />
           </Link>
           <div className="flex items-center gap-1.5">
-            <Link href="/notifications" className="rounded-lg p-2 hover:bg-border/30">
+            <Link href="/notifications" className="relative rounded-lg p-2 hover:bg-border/30">
               <Bell className="h-5 w-5" />
+              {notificationUnread > 0 ? (
+                <span className="absolute right-0.5 top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-brand-purple px-1 text-[9px] font-black text-white">
+                  {notificationUnread > 99 ? "99+" : notificationUnread}
+                </span>
+              ) : null}
             </Link>
             <AccountChip />
           </div>

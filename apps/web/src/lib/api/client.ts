@@ -58,8 +58,37 @@ async function request<T>(
         } else if (typeof errObj[""] === "string" && errObj[""].trim()) {
           message = errObj[""].trim();
         } else {
-          const firstKey = Object.keys(errObj).find((k) => typeof errObj[k] === "string");
-          if (firstKey) message = `${firstKey}: ${errObj[firstKey]}`;
+          const fieldParts: string[] = [];
+          for (const [k, v] of Object.entries(errObj)) {
+            if (typeof v === "string" && v.trim()) {
+              fieldParts.push(k ? `${k}: ${v.trim()}` : v.trim());
+            } else if (Array.isArray(v)) {
+              const msgs = v.filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+              if (msgs.length) fieldParts.push(k ? `${k}: ${msgs.join(", ")}` : msgs.join(", "));
+            }
+          }
+          if (fieldParts.length) message = fieldParts.slice(0, 3).join(" · ");
+        }
+      }
+      if (
+        typeof body === "object" &&
+        body !== null &&
+        (message.toLowerCase() === "payload validation error" ||
+          message.toLowerCase() === "please check your inputs" ||
+          message.toLowerCase() === "some details look invalid. check your input and try again.")
+      ) {
+        const b = body as Record<string, unknown>;
+        const data = b.data && typeof b.data === "object" ? (b.data as Record<string, unknown>) : null;
+        const err = b.error && typeof b.error === "object" ? (b.error as Record<string, unknown>) : null;
+        const source = err || data;
+        if (source) {
+          const fieldParts: string[] = [];
+          for (const [k, v] of Object.entries(source)) {
+            if (typeof v === "string" && v.trim() && k.toLowerCase() !== "message") {
+              fieldParts.push(`${k}: ${v.trim()}`);
+            }
+          }
+          if (fieldParts.length) message = fieldParts.slice(0, 3).join(" · ");
         }
       }
     }

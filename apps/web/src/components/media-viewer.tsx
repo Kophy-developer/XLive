@@ -6,7 +6,17 @@ import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { FeedItem, MediaComment } from "@/lib/types";
 import { normalizeFeedItem, followUser, unfollowUser, getUserProfile, getForYouFeed, getUserContent } from "@/lib/api/feed";
-import { getClip, getVideo, deleteOwnedMedia, getOwnerInsightsViews } from "@/lib/api/misc";
+import {
+  getClip,
+  getVideo,
+  deleteOwnedMedia,
+  getOwnerInsightsViews,
+  getWallet,
+  unlockVideo,
+  purchaseCollectibleClip,
+} from "@/lib/api/misc";
+import { ApiError } from "@/lib/api/client";
+import { isUnlockedLocal, markUnlockedLocal } from "@/lib/unlocked-media";
 import {
   countVisibleComments,
   createComment,
@@ -172,6 +182,8 @@ export function MediaReelViewer({ initialId }: { initialId: string }) {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const [slideIndex, setSlideIndex] = useState(0);
+  const [unlocking, setUnlocking] = useState(false);
+  const [unlockError, setUnlockError] = useState("");
   const cooldownRef = useRef(0);
   const fetchingMoreRef = useRef(false);
   const wheelAccRef = useRef(0);
@@ -425,7 +437,9 @@ export function MediaReelViewer({ initialId }: { initialId: string }) {
     item && (item.mediaType === "image" || isImageFeedItem(item))
       ? [item.mediaUrl, item.thumbnailUrl, item.previewUrl].find((u) => looksLikeImageUrl(u)) || thumb
       : fileUrl || thumb;
-  const locked = Boolean(item?.needsPurchase) || item?.accessAllowed === false;
+  const sessionUnlocked = Boolean(me?.id && item?.id && isUnlockedLocal(me.id, item.id));
+  const locked =
+    !sessionUnlocked && (Boolean(item?.needsPurchase) || item?.accessAllowed === false);
   const itemTargetType = item ? mediaTargetType(item.type) : "video";
 
   const commentsQuery = useQuery({
@@ -571,8 +585,68 @@ export function MediaReelViewer({ initialId }: { initialId: string }) {
                 <p className="mt-1.5 text-xs text-white/70">
                   Unlock for <span className="font-bold text-amber-400">{item.price ?? 5} coins</span>
                 </p>
-                <Link href="/wallet" className="mt-6 rounded-xl brand-gradient px-6 py-2.5 text-xs font-bold">
-                  Top up Wallet to Unlock
+                {unlockError ? <p className="mt-3 text-xs font-semibold text-red-300">{unlockError}</p> : null}
+                <button
+                  type="button"
+                  disabled={unlocking || !me?.id}
+                  onClick={async () => {
+                    if (!item?.id || !me?.id || unlocking) return;
+                    setUnlockError("");
+                    setUnlocking(true);
+                    try {
+                      const price = Number(item.price ?? 5) || 5;
+                      const wallet = await getWallet().catch(() => null);
+                      const balance = wallet?.balance ?? 0;
+                      if (balance < price) {
+                        setUnlockError("Not enough coins. Top up your wallet to unlock.");
+                        setUnlocking(false);
+                        return;
+                      }
+                      const isClip = item.type === "clip";
+                      try {
+                        if (isClip) await purchaseCollectibleClip(item.id);
+                        else await unlockVideo(item.id);
+                      } catch (err) {
+                        const msg = ((err as Error)?.message || "").toLowerCase();
+                        const owned =
+                          (err instanceof ApiError && err.status === 409) ||
+                          msg.includes("already unlocked") ||
+                          msg.includes("already purchased") ||
+                          msg.includes("already own");
+                        if (!owned) throw err;
+                      }
+                      markUnlockedLocal(me.id, item.id);
+                      const refreshed = isClip
+                        ? await getClip(item.id).catch(() => null)
+                        : await getVideo(item.id).catch(() => null);
+                      const next = refreshed ? normalizeFeedItem(refreshed as never) : null;
+                      setDetails((prev) => ({
+                        ...prev,
+                        [item.id]: {
+                          ...(prev[item.id] ?? item),
+                          ...(next || {}),
+                          needsPurchase: false,
+                          accessAllowed: true,
+                          id: item.id,
+                          type: item.type,
+                        },
+                      }));
+                      void queryClient.invalidateQueries({ queryKey: ["wallet"] });
+                      void queryClient.invalidateQueries({ queryKey: ["feed"] });
+                    } catch (err) {
+                      setUnlockError((err as Error).message || "Could not unlock this content.");
+                    } finally {
+                      setUnlocking(false);
+                    }
+                  }}
+                  className="mt-6 rounded-xl brand-gradient px-6 py-2.5 text-xs font-bold disabled:opacity-60"
+                >
+                  {unlocking
+                    ? "Unlocking…"
+                    : `Unlock · ${item.price ?? 5} coins`}
+                </button>
+                <Link href="/wallet" className="mt-3 text-[11px] font-semibold text-white/70 underline-offset-2 hover:underline">
+                  Top up wallet
                 </Link>
               </div>
             </div>
@@ -1034,8 +1108,12 @@ function ActionRail({
         type="button"
         onClick={async () => {
           if (!user?.id || locked) return;
-          const next = await toggleSavedMedia(user.id, targetType, item.id, !locked);
-          setSaved(next);
+          try {
+            const next = await toggleSavedMedia(user.id, targetType, item.id, !locked);
+            setSaved(next);
+          } catch {
+            /* keep prior saved state; store already rolled back */
+          }
         }}
         className="flex flex-col items-center gap-0.5"
         aria-label={saved ? "Unsave" : "Save"}

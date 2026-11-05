@@ -8,10 +8,12 @@ type AuthState = {
   isLoading: boolean;
   isAuthenticated: boolean;
   unreadTotal: number;
+  notificationUnread: number;
   setUser: (user: XLiveUser | null) => void;
   setLoading: (loading: boolean) => void;
   setAuthenticated: (value: boolean) => void;
   setUnreadTotal: (total: number) => void;
+  setNotificationUnread: (total: number) => void;
 };
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -19,10 +21,12 @@ export const useAuthStore = create<AuthState>((set) => ({
   isLoading: true,
   isAuthenticated: false,
   unreadTotal: 0,
+  notificationUnread: 0,
   setUser: (user) => set({ user }),
   setLoading: (isLoading) => set({ isLoading }),
   setAuthenticated: (isAuthenticated) => set({ isAuthenticated }),
   setUnreadTotal: (unreadTotal) => set({ unreadTotal }),
+  setNotificationUnread: (notificationUnread) => set({ notificationUnread }),
 }));
 
 type UiState = {

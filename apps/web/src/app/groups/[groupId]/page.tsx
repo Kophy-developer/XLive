@@ -36,6 +36,7 @@ import {
   isChatVoiceMessage,
   orderPendingForSend,
   pendingFromFiles,
+  prepareChatImageFile,
   revokePendingPreviews,
   visibleChatCaption,
   withChatDayPills,
@@ -319,13 +320,15 @@ function GroupChatContent() {
       for (let i = 0; i < items.length; i += 1) {
         const item = items[i];
         setUploadProgress({ index: i + 1, total: items.length, name: item.file.name, pct: 8 });
+        const file =
+          item.mediaType === "image" ? await prepareChatImageFile(item.file) : item.file;
         const msg = await uploadGroupChatMessage(
           groupId,
-          item.file,
+          file,
           contents[i],
           item.mediaType,
           replyId,
-          (pct) => setUploadProgress({ index: i + 1, total: items.length, name: item.file.name, pct })
+          (pct) => setUploadProgress({ index: i + 1, total: items.length, name: file.name, pct })
         );
         setMessages((prev) => mergeMessageList(prev, [msg]));
         scrollToBottomIfNear(true);
