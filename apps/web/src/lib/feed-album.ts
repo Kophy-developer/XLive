@@ -15,11 +15,17 @@ export function wrapFeedAlbumCaption(caption: string | undefined, albumId: strin
 
 export function feedAlbumIdFromTitle(title?: string | null) {
   const raw = title ?? "";
-  if (!raw.startsWith(ALBUM_PREFIX)) return null;
-  const end = raw.indexOf(ALBUM_SUFFIX, ALBUM_PREFIX.length);
-  if (end <= ALBUM_PREFIX.length) return null;
-  const id = raw.slice(ALBUM_PREFIX.length, end);
-  return id || null;
+  if (raw.startsWith(ALBUM_PREFIX)) {
+    const end = raw.indexOf(ALBUM_SUFFIX, ALBUM_PREFIX.length);
+    if (end > ALBUM_PREFIX.length) {
+      const id = raw.slice(ALBUM_PREFIX.length, end);
+      if (id) return id;
+    }
+  }
+  const wrapped = raw.match(/\u2063xlive_album:([^\u2063]+)\u2063/);
+  if (wrapped?.[1]) return wrapped[1];
+  const loose = raw.match(/xlive_album:([A-Za-z0-9_-]+)/);
+  return loose?.[1] || null;
 }
 
 export function stripFeedAlbumMarker(title?: string | null) {
@@ -28,10 +34,13 @@ export function stripFeedAlbumMarker(title?: string | null) {
   if (!id) return raw;
   const marker = `${ALBUM_PREFIX}${id}${ALBUM_SUFFIX}`;
   if (raw.startsWith(marker)) {
-    const rest = raw.slice(marker.length).trim();
-    return rest;
+    return raw.slice(marker.length).trim();
   }
-  return raw;
+  const wrapped = `${ALBUM_PREFIX}${id}${ALBUM_SUFFIX}`;
+  if (raw.includes(wrapped)) {
+    return raw.split(wrapped).join("").trim();
+  }
+  return raw.replace(new RegExp(`(?:\\u2063)?xlive_album:${id}(?:\\u2063)?`, "g"), "").trim();
 }
 
 export function displayFeedCaption(item: Pick<FeedItem, "caption" | "title" | "albumSlides">) {

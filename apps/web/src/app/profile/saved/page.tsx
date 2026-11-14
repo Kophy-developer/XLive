@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { Layers } from "lucide-react";
 import { AuthGuard, PageHeader } from "@/components/auth-guard";
-import { coalesceFeedAlbums } from "@/lib/feed-album";
+import { coalesceFeedAlbums, displayFeedCaption } from "@/lib/feed-album";
 import { useAuthStore } from "@/lib/stores";
 import { syncSavedFromApi, type SavedMediaRef } from "@/lib/saved-media";
 import type { FeedItem } from "@/lib/types";
@@ -12,7 +12,7 @@ import { cloudinaryUrl } from "@/lib/utils";
 
 type SavedTile = {
   id: string;
-  title?: string;
+  title: string;
   thumbnailUrl?: string;
   isAlbum: boolean;
 };
@@ -35,7 +35,7 @@ function toTiles(refs: SavedMediaRef[]): SavedTile[] {
   const coalesced = coalesceFeedAlbums(refs.map(toFeedItem));
   return coalesced.map((item) => ({
     id: item.id,
-    title: item.title || item.caption,
+    title: displayFeedCaption(item),
     thumbnailUrl: item.thumbnailUrl,
     isAlbum: Boolean(item.albumSlides && item.albumSlides.length > 1),
   }));
