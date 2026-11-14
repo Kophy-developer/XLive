@@ -85,6 +85,19 @@ export function albumSlidesOf(item: FeedItem) {
   return [item];
 }
 
+export function feedSaveTargetIds(item: Pick<FeedItem, "id" | "albumSlides">) {
+  const slides = item.albumSlides && item.albumSlides.length > 1 ? item.albumSlides : [item];
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const slide of slides) {
+    const id = String(slide.id || "").trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
 export function albumContainsId(item: FeedItem, id: string) {
   if (item.id === id) return true;
   return Boolean(item.albumSlides?.some((slide) => slide.id === id));
@@ -98,34 +111,48 @@ export function slideIndexInAlbum(item: FeedItem, id: string) {
 
 export function coalesceFeedAlbums(items: FeedItem[]) {
   if (!items.length) return items;
-  const out: FeedItem[] = [];
-  let i = 0;
-  while (i < items.length) {
-    const current = items[i];
-    if (current.albumSlides && current.albumSlides.length > 1) {
-      out.push(current);
-      i += 1;
+  const unique: FeedItem[] = [];
+  const seenIds = new Set<string>();
+  for (const item of items) {
+    if (item.albumSlides && item.albumSlides.length > 1) {
+      unique.push(item);
       continue;
     }
+    if (!item.id || seenIds.has(item.id)) continue;
+    seenIds.add(item.id);
+    unique.push(item);
+  }
 
-    const albumId = feedAlbumIdFromTitle(current.title) || feedAlbumIdFromTitle(current.caption);
-    if (albumId && isAlbumMediaCandidate(current)) {
-      const slides = [withDisplayTitle(current)];
-      let j = i + 1;
-      while (j < items.length) {
-        const next = items[j];
-        const nextId = feedAlbumIdFromTitle(next.title) || feedAlbumIdFromTitle(next.caption);
-        if (nextId !== albumId || !isAlbumMediaCandidate(next)) break;
-        slides.push(withDisplayTitle(next));
-        j += 1;
+  const groups = new Map<string, FeedItem[]>();
+  for (const item of unique) {
+    if (item.albumSlides && item.albumSlides.length > 1) continue;
+    const albumId = feedAlbumIdFromTitle(item.title) || feedAlbumIdFromTitle(item.caption);
+    if (!albumId || !isAlbumMediaCandidate(item)) continue;
+    const list = groups.get(albumId) ?? [];
+    list.push(withDisplayTitle(item));
+    groups.set(albumId, list);
+  }
+
+  const emitted = new Set<string>();
+  const out: FeedItem[] = [];
+  for (const item of unique) {
+    if (item.albumSlides && item.albumSlides.length > 1) {
+      out.push(item);
+      continue;
+    }
+    const albumId = feedAlbumIdFromTitle(item.title) || feedAlbumIdFromTitle(item.caption);
+    if (albumId && isAlbumMediaCandidate(item)) {
+      if (emitted.has(albumId)) continue;
+      emitted.add(albumId);
+      const slides = groups.get(albumId) ?? [withDisplayTitle(item)];
+      if (slides.length === 1) {
+        out.push(slides[0]);
+        continue;
       }
       out.push(copyWithAlbumSlides(slides[0], slides));
-      i = j;
       continue;
     }
-
-    out.push(withDisplayTitle(current));
-    i += 1;
+    out.push(withDisplayTitle(item));
   }
   return out;
 }

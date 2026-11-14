@@ -43,7 +43,13 @@ import {
 import { onSocketEvent } from "@/lib/socket";
 import { useAuthStore, useFeedViewerStore } from "@/lib/stores";
 import { cloudinaryUrl, cn, formatCount, handleLabel, isImageFeedItem, isOwnFeedItem, isRemovedFeedRecord, looksLikeImageUrl, looksLikeVideoUrl, originalMediaUrl, pickPreferredMediaUrl, playbackVideoUrl, publicHandle } from "@/lib/utils";
-import { albumContainsId, albumSlidesOf, displayFeedCaption, slideIndexInAlbum } from "@/lib/feed-album";
+import {
+  albumContainsId,
+  albumSlidesOf,
+  displayFeedCaption,
+  feedSaveTargetIds,
+  slideIndexInAlbum,
+} from "@/lib/feed-album";
 import { markFeedItemGone } from "@/lib/media-gone";
 import { GifPicker } from "@/components/gif-picker";
 import { DeletePostDialog } from "@/components/delete-post-dialog";
@@ -65,7 +71,7 @@ import {
   Loader2,
   Bookmark,
 } from "lucide-react";
-import { isSavedLocal, toggleSavedMedia } from "@/lib/saved-media";
+import { isSavedLocalAll, toggleSavedMediaGroup } from "@/lib/saved-media";
 
 function unwrapMediaRecord(raw: Record<string, unknown> | null | undefined): Record<string, unknown> | null {
   if (!raw || typeof raw !== "object") return null;
@@ -1019,9 +1025,12 @@ function ActionRail({
 }) {
   const user = useAuthStore((s) => s.user);
   const targetType = mediaTargetType(item.type);
+  const saveIds = feedSaveTargetIds(item);
+  const saveKey = saveIds.join("|");
   const [liked, setLiked] = useState(Boolean(item.likedByMe));
   const [likes, setLikes] = useState(item.likeCount ?? 0);
   const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [ownerViews, setOwnerViews] = useState<number | null>(null);
   const [saved, setSaved] = useState(false);
 
@@ -1030,8 +1039,8 @@ function ActionRail({
       setSaved(false);
       return;
     }
-    setSaved(isSavedLocal(user.id, targetType, item.id));
-  }, [user?.id, targetType, item.id]);
+    setSaved(isSavedLocalAll(user.id, saveIds));
+  }, [user?.id, saveKey]);
 
   useEffect(() => {
     setLiked(Boolean(item.likedByMe));
@@ -1107,17 +1116,25 @@ function ActionRail({
       <button
         type="button"
         onClick={async () => {
-          if (!user?.id || locked) return;
+          if (!user?.id || locked || saving || !saveIds.length) return;
+          if (targetType === "clip") {
+            window.alert("Only posts and videos can be saved.");
+            return;
+          }
+          setSaving(true);
           try {
-            const next = await toggleSavedMedia(user.id, targetType, item.id, !locked);
+            const next = await toggleSavedMediaGroup(user.id, targetType, saveIds, !locked);
             setSaved(next);
-          } catch {
-            /* keep prior saved state; store already rolled back */
+          } catch (err) {
+            const message = err instanceof Error ? err.message : "Could not save this post.";
+            window.alert(message);
+          } finally {
+            setSaving(false);
           }
         }}
         className="flex flex-col items-center gap-0.5"
         aria-label={saved ? "Unsave" : "Save"}
-        disabled={Boolean(locked) || !user?.id}
+        disabled={Boolean(locked) || !user?.id || saving}
       >
         <MediaOverlayIcon className={cn("transition hover:bg-black/55", saved && "bg-brand-purple/35")}>
           <Bookmark className={cn("h-5 w-5 text-white", saved && "fill-white")} />

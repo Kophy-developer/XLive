@@ -2,20 +2,48 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { Layers } from "lucide-react";
 import { AuthGuard, PageHeader } from "@/components/auth-guard";
-import { getVideo } from "@/lib/api/misc";
+import { coalesceFeedAlbums } from "@/lib/feed-album";
 import { useAuthStore } from "@/lib/stores";
 import { syncSavedFromApi, type SavedMediaRef } from "@/lib/saved-media";
+import type { FeedItem } from "@/lib/types";
 import { cloudinaryUrl } from "@/lib/utils";
 
-type SavedCard = SavedMediaRef & {
+type SavedTile = {
+  id: string;
   title?: string;
   thumbnailUrl?: string;
+  isAlbum: boolean;
 };
+
+function toFeedItem(ref: SavedMediaRef): FeedItem {
+  const mediaType =
+    ref.mediaType === "image" || ref.mediaType === "video" ? ref.mediaType : undefined;
+  const text = ref.title;
+  return {
+    id: ref.targetId,
+    type: "post",
+    title: text,
+    caption: text,
+    thumbnailUrl: ref.thumbnailUrl,
+    mediaType,
+  };
+}
+
+function toTiles(refs: SavedMediaRef[]): SavedTile[] {
+  const coalesced = coalesceFeedAlbums(refs.map(toFeedItem));
+  return coalesced.map((item) => ({
+    id: item.id,
+    title: item.title || item.caption,
+    thumbnailUrl: item.thumbnailUrl,
+    isAlbum: Boolean(item.albumSlides && item.albumSlides.length > 1),
+  }));
+}
 
 export default function SavedMediaPage() {
   const user = useAuthStore((s) => s.user);
-  const [items, setItems] = useState<SavedCard[]>([]);
+  const [items, setItems] = useState<SavedTile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [retryTick, setRetryTick] = useState(0);
@@ -31,31 +59,7 @@ export default function SavedMediaPage() {
     setError("");
     try {
       const refs = await syncSavedFromApi(user.id);
-      const cards: SavedCard[] = [];
-      for (const ref of refs) {
-        try {
-          const detail = await getVideo(ref.targetId);
-          const access = (detail as { access?: { allowed?: boolean; needsPurchase?: boolean } }).access;
-          const locked = access?.allowed === false || access?.needsPurchase === true;
-          if (locked) continue;
-          cards.push({
-            ...ref,
-            title: String(
-              (detail as { title?: string; caption?: string }).title ||
-                (detail as { caption?: string }).caption ||
-                ""
-            ),
-            thumbnailUrl: String(
-              (detail as { thumbnailUrl?: string; thumbnail?: string }).thumbnailUrl ||
-                (detail as { thumbnail?: string }).thumbnail ||
-                ""
-            ),
-          });
-        } catch {
-          cards.push(ref);
-        }
-      }
-      setItems(cards);
+      setItems(toTiles(refs.filter((item) => !item.locked)));
     } catch (err) {
       setItems([]);
       setError((err as Error)?.message || "Could not load saved media. Check your connection and retry.");
@@ -93,8 +97,8 @@ export default function SavedMediaPage() {
           <div className="grid grid-cols-3 gap-1">
             {items.map((item) => (
               <Link
-                key={`${item.targetType}:${item.targetId}`}
-                href={`/media/${item.targetId}`}
+                key={item.id}
+                href={`/media/${item.id}`}
                 className="relative aspect-[3/4] overflow-hidden bg-zinc-900"
               >
                 {item.thumbnailUrl ? (
@@ -106,6 +110,9 @@ export default function SavedMediaPage() {
                 ) : (
                   <div className="flex h-full items-center justify-center text-xs text-zinc-600">Media</div>
                 )}
+                {item.isAlbum ? (
+                  <Layers className="absolute right-1.5 top-1.5 h-3.5 w-3.5 text-white drop-shadow" />
+                ) : null}
               </Link>
             ))}
           </div>
