@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import '../core/navigation/app_navigator.dart';
+import '../core/network/api_client.dart';
 import '../core/media/media_url_cache.dart';
 import '../core/socket/xlive_socket_client.dart';
 import '../core/session/auth_session.dart';
@@ -55,11 +56,28 @@ import 'integration/push_inbox_screen.dart';
 import 'integration/stream_invite_toast.dart';
 import '../core/network/api_friendly_messages.dart';
 
+bool _unauthorizedHandlerBound = false;
+
+void _bindUnauthorizedHandler() {
+  if (_unauthorizedHandlerBound) return;
+  _unauthorizedHandlerBound = true;
+  ApiClient.onUnauthorized = () async {
+    await AuthSession.instance.signOut();
+    final nav = rootNavigator;
+    final ctx = rootNavigatorContext;
+    if (nav == null || ctx == null || !ctx.mounted) return;
+    final name = ModalRoute.of(ctx)?.settings.name ?? '';
+    if (name.startsWith('/auth')) return;
+    nav.pushNamedAndRemoveUntil('/auth/sign-in', (route) => false);
+  };
+}
+
 class XLiveApp extends StatelessWidget {
   const XLiveApp({super.key});
 
   @override
   Widget build(BuildContext context) {
+    _bindUnauthorizedHandler();
     return ListenableBuilder(
       listenable: AuthSession.instance,
       builder: (context, _) {

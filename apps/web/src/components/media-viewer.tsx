@@ -93,7 +93,7 @@ function recordFromPayload(raw: Record<string, unknown> | null | undefined, type
   return normalizeFeedItem({ ...inner, type });
 }
 
-async function loadMediaDetail(id: string, hint?: FeedItem["type"]): Promise<FeedItem | "removed" | null> {
+async function loadMediaDetail(id: string, hint?: FeedItem["type"]): Promise<FeedItem | "removed" | "unavailable" | null> {
   const tryVideo = async () => {
     const v = await getVideo(id);
     return recordFromPayload(v, hint === "clip" ? "clip" : String(v?.type || "video"));
@@ -104,17 +104,20 @@ async function loadMediaDetail(id: string, hint?: FeedItem["type"]): Promise<Fee
   };
   const first = hint === "clip" ? tryClip : tryVideo;
   const second = hint === "clip" ? tryVideo : tryClip;
+  const isGone = (err: unknown) => err instanceof ApiError && (err.status === 404 || err.status === 410);
   try {
     const item = await first();
     if (item === "removed") return "removed";
     if (item) return item;
-  } catch {
+  } catch (err) {
+    if (isGone(err)) return "unavailable";
   }
   try {
     const item = await second();
     if (item === "removed") return "removed";
     if (item) return item;
-  } catch {
+  } catch (err) {
+    if (isGone(err)) return "unavailable";
   }
   return null;
 }
@@ -226,7 +229,10 @@ export function MediaReelViewer({ initialId }: { initialId: string }) {
       if (detail === "removed") {
         markFeedItemGone(initialId, queryClient);
       }
-      const start = detail && detail !== "removed" ? detail : null;
+      if (detail === "unavailable") {
+        setUnavailableIds((prev) => (prev[initialId] ? prev : { ...prev, [initialId]: true }));
+      }
+      const start = detail && detail !== "removed" && detail !== "unavailable" ? detail : null;
       let extras: FeedItem[] = [];
       if (start?.creatorId) {
         try {
@@ -323,6 +329,12 @@ export function MediaReelViewer({ initialId }: { initialId: string }) {
     [closeViewer, queryClient, removeItem, router]
   );
 
+  const [unavailableIds, setUnavailableIds] = useState<Record<string, boolean>>({});
+  const currentExpiry = currentSlide
+    ? (details[currentSlide.id] ?? currentSlide).streamExpiresAt
+    : undefined;
+  const streamExpired = Boolean(currentExpiry && Date.parse(currentExpiry) <= Date.now());
+
   useEffect(() => {
     if (!currentSlide?.id) return;
     const id = currentSlide.id;
@@ -334,6 +346,10 @@ export function MediaReelViewer({ initialId }: { initialId: string }) {
       if (cancelled) return;
       if (detail === "removed") {
         dropGone(id);
+        return;
+      }
+      if (detail === "unavailable") {
+        setUnavailableIds((prev) => (prev[id] ? prev : { ...prev, [id]: true }));
         return;
       }
       if (!detail) return;
@@ -357,7 +373,7 @@ export function MediaReelViewer({ initialId }: { initialId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [active?.albumSlides, currentSlide?.id, currentSlide?.type, dropGone]);
+  }, [active?.albumSlides, currentSlide?.id, currentSlide?.type, dropGone, streamExpired]);
 
   useEffect(() => {
     if (!items.length || !fetchMore) return;
@@ -656,6 +672,8 @@ export function MediaReelViewer({ initialId }: { initialId: string }) {
                 </Link>
               </div>
             </div>
+          ) : unavailableIds[item.id] ? (
+            <VideoUnavailable poster={thumb} />
           ) : playback ? (
             <ReelMedia
               item={item}
@@ -887,6 +905,17 @@ function ZoomableImage({
   );
 }
 
+function VideoUnavailable({ poster }: { poster?: string }) {
+  return (
+    <div className="absolute inset-0 z-0 flex items-center justify-center bg-black">
+      {poster ? (
+        <img src={poster} alt="" className="absolute inset-0 h-full w-full object-cover opacity-30" />
+      ) : null}
+      <p className="relative px-6 text-center text-sm font-semibold text-white">This video is unavailable</p>
+    </div>
+  );
+}
+
 function ReelMedia({
   item,
   playback,
@@ -925,10 +954,15 @@ function ReelVideo({
   active: boolean;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
+  const [unavailable, setUnavailable] = useState(false);
+
+  useEffect(() => {
+    setUnavailable(false);
+  }, [src]);
 
   useEffect(() => {
     const el = ref.current;
-    if (!el) return;
+    if (!el || unavailable) return;
     el.muted = false;
     el.defaultMuted = false;
     if (active) {
@@ -937,7 +971,9 @@ function ReelVideo({
     } else {
       el.pause();
     }
-  }, [active, src]);
+  }, [active, src, unavailable]);
+
+  if (unavailable) return <VideoUnavailable poster={poster} />;
 
   return (
     <video
@@ -957,6 +993,17 @@ function ReelVideo({
       }}
       onError={(e) => {
         if (e.currentTarget.error?.code === MediaError.MEDIA_ERR_ABORTED) return;
+        void (async () => {
+          try {
+            const res = await fetch(src, { method: "HEAD" });
+            if (res.status === 404 || res.status === 410) {
+              setUnavailable(true);
+              return;
+            }
+          } catch {
+          }
+          setUnavailable(true);
+        })();
       }}
       onClick={() => {
         const el = ref.current;

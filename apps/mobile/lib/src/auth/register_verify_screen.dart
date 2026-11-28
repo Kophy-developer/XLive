@@ -133,7 +133,8 @@ class _RegisterVerifyScreenState extends State<RegisterVerifyScreen> {
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
-        child: Column(
+        child: AuthScrollBody(
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             AuthTopBar(
@@ -206,6 +207,7 @@ class _RegisterVerifyScreenState extends State<RegisterVerifyScreen> {
               child: AuthLegalFooter(),
             ),
           ],
+        ),
         ),
       ),
     );

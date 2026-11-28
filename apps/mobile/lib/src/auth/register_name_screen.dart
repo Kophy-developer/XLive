@@ -31,7 +31,8 @@ class _RegisterNameScreenState extends State<RegisterNameScreen> {
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
-        child: Column(
+        child: AuthScrollBody(
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             AuthTopBar(
@@ -127,6 +128,7 @@ class _RegisterNameScreenState extends State<RegisterNameScreen> {
               child: AuthLegalFooter(),
             ),
           ],
+        ),
         ),
       ),
     );

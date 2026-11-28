@@ -1,9 +1,10 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { acceptStreamInvite, declineStreamInvite, getMyInvites } from "@/lib/api/streams";
 import { onSocketEvent, socketEvents } from "@/lib/socket";
+import { useSocketFallbackPoll } from "@/lib/socket-fallback";
 import { useAuthStore } from "@/lib/stores";
 import type { StreamInvite } from "@/lib/types";
 import { cloudinaryUrl } from "@/lib/utils";
@@ -35,30 +36,28 @@ export function StreamInviteDialog() {
     } catch {}
   }
 
+  const checkInvites = useCallback(async () => {
+    if (!currentUser?.id || invite) return;
+    try {
+      const res = await getMyInvites(1, 10);
+      const pending = res.invites.find(
+        (i) =>
+          i.status === "pending" &&
+          !handledIdsRef.current.has(i.id) &&
+          (i.streamStatus === "live" || i.streamStatus === "scheduled")
+      );
+      if (pending) {
+        setInvite(pending);
+        playAlertChime();
+      }
+    } catch {}
+  }, [currentUser?.id, invite]);
+
+  useSocketFallbackPoll(checkInvites, { enabled: Boolean(currentUser?.id) });
+
   useEffect(() => {
     if (!currentUser?.id) return;
-
     let isMounted = true;
-
-    async function checkInvites() {
-      try {
-        const res = await getMyInvites(1, 10);
-        if (!isMounted) return;
-        const pending = res.invites.find(
-          (i) =>
-            i.status === "pending" &&
-            !handledIdsRef.current.has(i.id) &&
-            (i.streamStatus === "live" || i.streamStatus === "scheduled")
-        );
-        if (pending && !invite) {
-          setInvite(pending);
-          playAlertChime();
-        }
-      } catch {}
-    }
-
-    checkInvites();
-    const interval = setInterval(checkInvites, 18000);
 
     const offIncoming = onSocketEvent<Record<string, unknown>>(
       socketEvents.streamInviteIncoming,
@@ -91,10 +90,9 @@ export function StreamInviteDialog() {
 
     return () => {
       isMounted = false;
-      clearInterval(interval);
       offIncoming();
     };
-  }, [currentUser?.id, invite]);
+  }, [currentUser?.id]);
 
   if (!invite) return null;
 

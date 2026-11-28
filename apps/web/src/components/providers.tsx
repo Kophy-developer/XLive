@@ -1,6 +1,7 @@
 "use client";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ApiError } from "@/lib/api/client";
 import { useState, type ReactNode } from "react";
 import { AuthProvider } from "./auth-provider";
 import { IncomingCallDialog, OngoingCallBanner } from "./incoming-call-dialog";
@@ -15,7 +16,10 @@ export function Providers({ children }: { children: ReactNode }) {
         defaultOptions: {
           queries: {
             staleTime: 30_000,
-            retry: 1,
+            retry: (failureCount, error) => {
+              if (error instanceof ApiError && error.status === 401) return false;
+              return failureCount < 1;
+            },
           },
         },
       })

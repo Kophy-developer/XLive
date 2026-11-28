@@ -69,7 +69,8 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
-        child: Column(
+        child: AuthScrollBody(
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Align(
@@ -115,6 +116,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
               ),
             ),
           ],
+        ),
         ),
       ),
     );

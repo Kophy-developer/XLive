@@ -221,6 +221,7 @@ class MediaDetail {
     required this.title,
     this.thumbnailUrl,
     this.streamUrl,
+    this.streamExpiresAt,
     this.mediaType,
     this.viewCount = 0,
     this.likeCount = 0,
@@ -244,6 +245,7 @@ class MediaDetail {
   final String title;
   final String? thumbnailUrl;
   final String? streamUrl;
+  final DateTime? streamExpiresAt;
   final String? mediaType;
   final int viewCount;
   final int likeCount;
@@ -303,6 +305,7 @@ class MediaDetail {
       streamUrl: allowed
           ? ApiJson.pickString(data, ['url', 'mediaUrl', 'videoUrl', 'streamUrl', 'playbackUrl', 'fileUrl'])
           : null,
+      streamExpiresAt: DateTime.tryParse(ApiJson.pickString(data, ['streamExpiresAt', 'expiresAt', 'expiry']) ?? ''),
       mediaType: ApiJson.pickString(data, ['mediaType', 'mimeType', 'contentType']),
       viewCount: ApiJson.pickMetricInt(data, ['viewCount', 'views', 'viewerCount']),
       likeCount: ApiJson.pickMetricInt(data, ['likeCount', 'likes']),

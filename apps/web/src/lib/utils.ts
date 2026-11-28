@@ -207,11 +207,16 @@ function asCloudinaryImage(url: string, transform: string) {
   return `${match[1]}/image/upload/${rest}`;
 }
 
+function isSignedCloudinaryUrl(url: string) {
+  return /\/s--[^/]+--\//.test(url);
+}
+
 export function resolveMediaSrc(path?: string | null, kind: "image" | "video" = "image") {
   if (!path || typeof path !== "string") return "";
   const trimmed = path.trim();
   if (!trimmed) return "";
   if (trimmed.startsWith("//")) return `https:${trimmed}`;
+  if (isSignedCloudinaryUrl(trimmed)) return trimmed;
   if (/^https?:\/\//i.test(trimmed)) {
     if (kind === "image" && /\/video\/upload\//i.test(trimmed)) {
       return trimmed.replace(/\/video\/upload\//i, "/image/upload/");
@@ -240,6 +245,7 @@ export function originalMediaUrl(path?: string | null) {
 export function cloudinaryUrl(path?: string | null, transform = "c_fill,w_400,h_400,g_auto,f_auto,q_auto") {
   const resolved = resolveMediaSrc(path, "image");
   if (!resolved) return "";
+  if (isSignedCloudinaryUrl(resolved)) return resolved;
   if (CLOUDINARY_UPLOAD.test(resolved)) {
     const withAuto = /f_auto/i.test(transform) ? transform : `${transform},f_auto,q_auto`;
     return asCloudinaryImage(resolved, withAuto);
@@ -253,6 +259,7 @@ export function playbackVideoUrl(path?: string | null): string {
   if (!trimmed) return "";
   const fromHost = cloudinaryVideoFromHostUpload(trimmed);
   if (fromHost) return fromHost;
+  if (isSignedCloudinaryUrl(trimmed)) return trimmed;
   const resolved = /^https?:\/\//i.test(trimmed) || trimmed.startsWith("//")
     ? resolveMediaSrc(trimmed, "video")
     : isHostStoredPath(trimmed)
