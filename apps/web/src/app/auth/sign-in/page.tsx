@@ -6,7 +6,7 @@ import { useState } from "react";
 import { GuestGuard } from "@/components/auth-guard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { signIn, getMe } from "@/lib/api/auth";
+import { EmailNotVerifiedError, resendVerification, signIn, getMe } from "@/lib/api/auth";
 import { connectSocket } from "@/lib/socket";
 import { useAuthStore } from "@/lib/stores";
 import { Lock, User, ArrowRight } from "lucide-react";
@@ -31,12 +31,13 @@ export default function SignInPage() {
       connectSocket();
       router.push("/home");
     } catch (err) {
-      const e = err as Error & { needsVerification?: boolean };
-      if (e.needsVerification) {
-        router.push(`/auth/create-account?verify=${encodeURIComponent(identifier)}`);
+      if (err instanceof EmailNotVerifiedError) {
+        // The 403 sends no code (verificationSent: false), so send one, then open the verify step.
+        await resendVerification(err.email);
+        router.push(`/auth/create-account?verify=${encodeURIComponent(err.email)}&sent=1`);
         return;
       }
-      setError(e.message || "Sign in failed");
+      setError((err as Error).message || "Sign in failed");
     } finally {
       setLoading(false);
     }
@@ -86,7 +87,6 @@ export default function SignInPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
-                  minLength={6}
                   className="h-11 rounded-2xl bg-surface-hover/60 pl-10 border-border/60 focus-visible:ring-brand-purple"
                 />
               </div>

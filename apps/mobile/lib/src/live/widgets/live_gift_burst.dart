@@ -10,12 +10,14 @@ class LiveGiftBurst {
     required this.senderName,
     required this.giftLabel,
     this.quantity = 1,
+    this.toHost = false,
   });
 
   final String id;
   final String senderName;
   final String giftLabel;
   final int quantity;
+  final bool toHost;
   final DateTime createdAt = DateTime.now();
 }
 
@@ -81,7 +83,9 @@ class _LiveGiftBurstOverlayState extends State<LiveGiftBurstOverlay> with Single
                         style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16),
                       ),
                       Text(
-                        'sent ${b.giftLabel}${b.quantity > 1 ? ' x${b.quantity}' : ''}',
+                        b.toHost
+                            ? 'sent ${b.giftLabel}${b.quantity > 1 ? ' x${b.quantity}' : ''} to you'
+                            : 'sent ${b.giftLabel}${b.quantity > 1 ? ' x${b.quantity}' : ''}',
                         style: TextStyle(color: Colors.white.withValues(alpha: 0.9), fontSize: 14),
                       ),
                     ],

@@ -73,10 +73,9 @@ class ProfileMainScreen extends StatelessWidget {
                     _ProfileTile(icon: Icons.account_balance_wallet_outlined, label: 'Xlive Wallet', onTap: () => Navigator.pushNamed(context, '/wallet/xlive')),
                     _ProfileTile(icon: Icons.card_giftcard_rounded, label: 'My Gifts', onTap: () => Navigator.pushNamed(context, '/profile/gifts')),
                     _ProfileTile(icon: Icons.bookmark_border_rounded, label: 'Saved', onTap: () => Navigator.pushNamed(context, '/profile/saved')),
-                    _ProfileTile(icon: Icons.notifications_none_rounded, label: 'Notifications', onTap: () => Navigator.pushNamed(context, '/profile/notifications')),
                     _ProfileTile(
-                      icon: Icons.inbox_outlined,
-                      label: 'Activity inbox',
+                      icon: Icons.notifications_none_rounded,
+                      label: 'Notifications',
                       badge: AuthSession.instance.notificationUnread > 0
                           ? (AuthSession.instance.notificationUnread > 99
                               ? '99+'
@@ -356,7 +355,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _usernameCtrl.text = user?.username ?? '';
     _avatarUrl = user?.avatarUrl;
     _gender = mapGenderFromApi(user?.gender);
-    _languageChoice = user?.language == 'en' ? 'English' : 'English';
+    _languageChoice = mapLanguageFromApi(user?.language);
   }
 
   @override
@@ -424,7 +423,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 children: [
                   _SheetRadioRow(label: 'English', selected: temp == 'English', onTap: () => setModalState(() => temp = 'English')),
                   const SizedBox(height: 4),
-                  _SheetRadioRow(label: 'Other Languages', selected: temp == 'Other Languages', onTap: () => setModalState(() => temp = 'Other Languages')),
+                  _SheetRadioRow(label: 'Spanish', selected: temp == 'Spanish', onTap: () => setModalState(() => temp = 'Spanish')),
+                  const SizedBox(height: 4),
+                  _SheetRadioRow(label: 'French', selected: temp == 'French', onTap: () => setModalState(() => temp = 'French')),
+                  const SizedBox(height: 4),
+                  _SheetRadioRow(label: 'Mandarin', selected: temp == 'Mandarin', onTap: () => setModalState(() => temp = 'Mandarin')),
                   const SizedBox(height: 20),
                   SizedBox(
                     width: double.infinity,

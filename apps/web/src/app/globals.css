@@ -3,6 +3,7 @@
 @tailwind utilities;
 
 :root {
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --brand-purple: 138 45 220;
   --brand-sky: 53 211 251;
   --background: 12 12 18;

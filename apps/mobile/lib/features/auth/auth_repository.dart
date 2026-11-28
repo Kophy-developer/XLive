@@ -1,19 +1,40 @@
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
-import '../../../core/network/api_json.dart';
 import '../users/models/user_models.dart';
 import 'models/auth_models.dart';
 
+/// Client for the XLive backend auth endpoints (`/api/x-live/auth/*`).
+///
+/// Every response uses the envelope `{ message, status, statusCode, data, error }`;
+/// [ApiClient] turns non-2xx / `status: false` responses into [ApiException]
+/// carrying the server's message. `POST /auth/token` is dev/test only and unused.
 class AuthRepository {
   AuthRepository({ApiClient? client}) : _client = client ?? ApiClient();
 
   final ApiClient _client;
 
-  Future<void> checkAvailability(String variable) async {
-    await _client.authPost('/auth/check', body: {'variable': variable});
+  static const _authPath = '/api/x-live/auth';
+
+  Future<Map<String, dynamic>> _post(String path, Map<String, dynamic> body, {bool auth = false}) {
+    return _client.apiPost('$_authPath$path', body: body, auth: auth);
   }
 
-  Future<String> register({
+  /// `POST /auth/check` → `data: { exists, matchedBy }`. Matches email or phone only.
+  Future<bool> checkExists(String variable) async {
+    final json = await _post('/check', {'variable': variable.trim()});
+    return (json['data'] as Map<String, dynamic>)['exists'] == true;
+  }
+
+  /// Throws an [ApiException] with status 409 when the email or phone is already registered.
+  Future<void> checkAvailability(String variable) async {
+    if (await checkExists(variable)) {
+      throw ApiException('This account already exists.', statusCode: 409);
+    }
+  }
+
+  /// `POST /auth/create`: emails a 6-digit verification code; no token until verified.
+  /// Duplicate email/username errors come back as [ApiException] with the server's message.
+  Future<void> register({
     required String email,
     required String firstName,
     required String lastName,
@@ -21,174 +42,83 @@ class AuthRepository {
     required String phone,
     required String password,
   }) async {
-    final json = await _client.authPost(
-      '/auth/create',
-      body: {
-        'email': email,
-        'first_name': firstName,
-        'last_name': lastName,
-        'username': username,
-        'phone': phone,
-        'password': password,
-      },
-    );
-    final data = json['data'];
-    if (data is Map<String, dynamic>) {
-      final result = data['result'];
-      if (result is Map<String, dynamic>) {
-        final id = result['id']?.toString();
-        if (id != null && id.isNotEmpty) return id;
+    await _post('/create', {
+      'email': email.trim(),
+      'first_name': firstName.trim(),
+      'last_name': lastName.trim(),
+      'username': username.trim(),
+      'phone': phone.trim(),
+      'password': password,
+    });
+  }
+
+  Future<void> resendVerification(String email) async {
+    await _post('/resend-verification', {'email': email.trim()});
+  }
+
+  /// `POST /auth/verify-email` → `data: { token, user }`.
+  Future<AuthTokenResult> verifyEmail({required String email, required String code}) async {
+    final json = await _post('/verify-email', {'email': email.trim(), 'code': code.trim()});
+    return _tokenResult(json, identifier: email.trim());
+  }
+
+  /// `POST /auth/login` with email, username or phone → `data: { token, user }`.
+  /// Throws [EmailNotVerifiedException] on 403 (email not verified yet); the body
+  /// carries the account email even for username/phone logins.
+  Future<AuthTokenResult> login({required String identifier, required String password}) async {
+    final id = identifier.trim();
+    final compactPhone = id.replaceAll(RegExp(r'[\s\-()]'), '');
+    final key = id.contains('@')
+        ? 'email'
+        : RegExp(r'^\+?\d{7,}$').hasMatch(compactPhone)
+            ? 'phone'
+            : 'username';
+    try {
+      final json = await _post('/login', {key: key == 'phone' ? compactPhone : id, 'password': password});
+      return _tokenResult(json, identifier: id);
+    } on ApiException catch (e) {
+      if (e.statusCode == 403) {
+        final error = (e.details as Map<String, dynamic>)['error'] as Map<String, dynamic>;
+        throw EmailNotVerifiedException(message: e.message, email: error['email'] as String);
       }
+      rethrow;
     }
-    throw ApiException('Registration succeeded but user id was missing');
   }
 
-  Future<void> requestVerificationCode({required String userId, required String type}) async {
-    await _client.authPost('/auth/verify-request', body: {'userid': userId, 'type': type});
-  }
-
-  Future<void> verifyCode({required String userId, required String code, required String type}) async {
-    await _client.authPost('/auth/verify-code', body: {'userid': userId, 'code': code, 'type': type});
-  }
-
-  Future<String?> resolveEmailForUsername(String username) async {
-    final query = username.trim();
-    if (query.isEmpty) return null;
-    final json = await _client.apiGet(
-      '/api/x-live/users/search',
-      query: {'q': query, 'limit': '5'},
-      auth: false,
-    );
-    final normalized = query.toLowerCase();
-    for (final item in ApiJson.listItems(json)) {
-      final candidate = ApiJson.pickString(item, ['username'])?.toLowerCase();
-      if (candidate == normalized) {
-        return ApiJson.pickString(item, ['email']);
-      }
-    }
-    return null;
-  }
-
-  Future<AuthLoginResult> login({required String identifier, required String password}) async {
-    final json = await _client.authPost('/auth/login', body: {'identifier': identifier, 'password': password});
-    final data = json['data'];
-    Map<String, dynamic>? result;
-    if (data is Map<String, dynamic>) {
-      final inner = data['result'];
-      if (inner is Map<String, dynamic>) {
-        result = inner;
-      }
-    }
-    var userId = result?['userId']?.toString() ?? result?['id']?.toString();
-    final rawToken = json['token']?.toString();
-    final authToken = (rawToken != null && rawToken.isNotEmpty && rawToken != 'null') ? rawToken : null;
-    userId ??= ApiJson.jwtSubject(authToken);
-    if (userId == null || userId.isEmpty) {
-      throw ApiException('Login succeeded but user id was missing');
-    }
-    return AuthLoginResult(
-      userId: userId,
-      identifier: identifier,
-      needsVerification: json['needsVerification'] == true,
-      emailVerified: result?['email_verified'] == true,
-      phoneVerified: result?['phone_verified'] == true,
-    );
-  }
-
-  Future<void> requestPasswordReset(String email) async {
-    await _client.authPost('/password/reset-request', body: {'email': email});
-  }
-
-  Future<String?> requestPasswordResetWithMeta(String email) async {
-    final json = await _client.authPost('/password/reset-request', body: {'email': email});
-    final data = json['data'];
-    if (data is Map<String, dynamic>) {
-      return data['id']?.toString();
-    }
-    return null;
+  /// `POST /auth/forgot-password` → `data: { sent, expiresInMinutes }`.
+  Future<void> forgotPassword(String email) async {
+    await _post('/forgot-password', {'email': email.trim()});
   }
 
   Future<void> resetPassword({
-    required String identifier,
+    required String email,
     required String code,
-    required String password,
+    required String newPassword,
   }) async {
-    await _client.authPost(
-      '/password/reset',
-      body: {'identifier': identifier, 'code': code, 'password': password},
+    await _post('/reset-password', {
+      'email': email.trim(),
+      'code': code.trim(),
+      'newPassword': newPassword,
+    });
+  }
+
+  /// `POST /auth/change-password` (Bearer).
+  Future<void> changePassword({required String currentPassword, required String newPassword}) async {
+    await _post(
+      '/change-password',
+      {'currentPassword': currentPassword, 'newPassword': newPassword},
+      auth: true,
     );
   }
 
-  Future<BridgeTokenResult> generateBridgeToken({
-    String? identifier,
-    String? username,
-    String? email,
-    String? phone,
-    String? userId,
-  }) async {
-    final attempts = <Map<String, dynamic>>[];
-    final seen = <String>{};
-
-    void add(Map<String, dynamic> body) {
-      final key = body.entries.map((e) => '${e.key}:${e.value}').join('|');
-      if (seen.add(key)) attempts.add(body);
-    }
-
-    final primary = (identifier ?? username ?? email ?? phone ?? '').trim();
-    if (primary.isNotEmpty) add({'identifier': primary});
-    if (userId != null && userId.isNotEmpty) add({'id': userId});
-    if (username != null && username.isNotEmpty) add({'username': username});
-    if (email != null && email.isNotEmpty) add({'email': email});
-    if (phone != null && phone.isNotEmpty) add({'phone': phone});
-    if (identifier != null && identifier.isNotEmpty && identifier != primary) {
-      if (identifier.contains('@')) {
-        add({'email': identifier});
-      } else if (RegExp(r'^\+?\d{7,}$').hasMatch(identifier)) {
-        add({'phone': identifier});
-      } else {
-        add({'username': identifier});
-      }
-    }
-
-    if (attempts.isEmpty) {
-      throw ApiException('Missing bridge token identifier');
-    }
-
-    Object? lastError;
-    for (final body in attempts) {
-      try {
-        final json = await _client.apiPost('/api/x-live/auth/token', body: body, auth: false);
-        final data = json['data'];
-        final payload = data is Map<String, dynamic> ? data : json;
-        final token = payload['token']?.toString();
-        final userRaw = payload['user'];
-        XLiveUser? user;
-        String? bridgeUserId;
-        if (userRaw is Map<String, dynamic>) {
-          user = XLiveUser.fromJson(userRaw);
-          bridgeUserId = user.id.isNotEmpty ? user.id : null;
-        } else if (userRaw is Map) {
-          final mapped = Map<String, dynamic>.from(userRaw);
-          user = XLiveUser.fromJson(mapped);
-          bridgeUserId = user.id.isNotEmpty ? user.id : null;
-        }
-        bridgeUserId ??= payload['userId']?.toString();
-        if (token == null || token.isEmpty) {
-          throw ApiException(json['message']?.toString() ?? 'Bridge token missing');
-        }
-        return BridgeTokenResult(
-          token: token,
-          userId: bridgeUserId ?? userId ?? '',
-          user: user,
-        );
-      } on ApiException catch (e) {
-        lastError = e;
-        if (e.statusCode == 404 || e.statusCode == 400 || e.statusCode == 422) continue;
-        rethrow;
-      }
-    }
-
-    if (lastError is ApiException) throw lastError;
-    throw BridgeUserNotFoundException();
+  AuthTokenResult _tokenResult(Map<String, dynamic> json, {required String identifier}) {
+    final data = json['data'] as Map<String, dynamic>;
+    final user = XLiveUser.fromJson(data['user'] as Map<String, dynamic>);
+    return AuthTokenResult(
+      token: data['token'] as String,
+      userId: user.id,
+      identifier: identifier,
+      user: user,
+    );
   }
 }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -103,6 +104,7 @@ class AgoraStreamViewState extends State<AgoraStreamView> {
   bool _hostMicEnabled = true;
   bool _hostCameraEnabled = true;
   bool _screenShareActive = false;
+  bool _remoteAudioDucked = false;
   int _videoDeviceCount = 0;
 
   bool get canFlipCamera => widget.isBroadcaster && _videoDeviceCount > 1;
@@ -124,6 +126,10 @@ class AgoraStreamViewState extends State<AgoraStreamView> {
     final c = widget.controller;
     if (c == null || !mounted) return;
     _applyTalkBack(c.talkBackActive, c.micPublishEnabled);
+    if (_remoteAudioDucked != c.remoteAudioDucked) {
+      _remoteAudioDucked = c.remoteAudioDucked;
+      unawaited(_applyRemoteAudioDuck(_remoteAudioDucked));
+    }
     if (widget.isBroadcaster && _hostMicEnabled != c.hostMicEnabled) {
       _hostMicEnabled = c.hostMicEnabled;
       _engine?.enableLocalAudio(c.hostMicEnabled);
@@ -139,6 +145,14 @@ class AgoraStreamViewState extends State<AgoraStreamView> {
     if (widget.isBroadcaster && _screenShareActive != c.screenShareActive) {
       _applyScreenShare(c.screenShareActive);
     }
+  }
+
+  Future<void> _applyRemoteAudioDuck(bool ducked) async {
+    final engine = _engine;
+    if (engine == null) return;
+    try {
+      await engine.adjustPlaybackSignalVolume(ducked ? 12 : 100);
+    } catch (_) {}
   }
 
   Future<void> _applyScreenShare(bool active) async {

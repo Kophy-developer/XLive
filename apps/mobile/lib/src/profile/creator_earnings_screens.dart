@@ -255,6 +255,26 @@ class _EarningsWithdrawalScreenState extends State<EarningsWithdrawalScreen> {
               _load();
             },
           ),
+          const SizedBox(height: 16),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF6F6F6),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Earned in range', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.grey.shade700)),
+                const SizedBox(height: 6),
+                Text(
+                  '\$${(earnings?.totalEarnedInRange ?? 0).toStringAsFixed(2)}',
+                  style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: _black),
+                ),
+              ],
+            ),
+          ),
           const SizedBox(height: 20),
           _EarningsBreakdownList(breakdown: earnings?.breakdown ?? const {}),
           if (_withdrawals.isNotEmpty) ...[

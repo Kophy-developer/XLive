@@ -129,6 +129,7 @@ class InAppNotificationStore extends ChangeNotifier {
             'title': n.title,
             if (n.body != null) 'body': n.body,
             'readAt': n.readAt,
+            if (n.createdAt != null) 'createdAt': n.createdAt,
             if (n.targetUrl != null) 'targetUrl': n.targetUrl,
             ...n.data,
             'hydrated': true,
@@ -259,6 +260,48 @@ class InAppNotificationStore extends ChangeNotifier {
   DateTime _resolveCreatedAt(Map<String, dynamic> data) {
     final raw = ApiJson.pickString(data, ['createdAt', 'timestamp', 'receivedAt']);
     return DateTime.tryParse(raw ?? '') ?? DateTime.now();
+  }
+
+  void markLocalRead(String id) {
+    final index = _items.indexWhere((item) => item.id == id);
+    if (index < 0) return;
+    final current = _items[index];
+    if (ApiJson.pickString(current.payload, ['readAt']) != null) return;
+    final payload = Map<String, dynamic>.from(current.payload);
+    payload['readAt'] = DateTime.now().toIso8601String();
+    _items[index] = InAppNotification(
+      id: current.id,
+      type: current.type,
+      title: current.title,
+      body: current.body,
+      payload: payload,
+      createdAt: current.createdAt,
+    );
+    notifyListeners();
+    _persist();
+  }
+
+  void markAllLocalRead() {
+    var changed = false;
+    final now = DateTime.now().toIso8601String();
+    for (var i = 0; i < _items.length; i++) {
+      final current = _items[i];
+      if (ApiJson.pickString(current.payload, ['readAt']) != null) continue;
+      final payload = Map<String, dynamic>.from(current.payload);
+      payload['readAt'] = now;
+      _items[i] = InAppNotification(
+        id: current.id,
+        type: current.type,
+        title: current.title,
+        body: current.body,
+        payload: payload,
+        createdAt: current.createdAt,
+      );
+      changed = true;
+    }
+    if (!changed) return;
+    notifyListeners();
+    _persist();
   }
 
   void clear() {

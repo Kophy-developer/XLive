@@ -9,30 +9,12 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
-class BridgeUserNotFoundException extends ApiException {
-  BridgeUserNotFoundException()
-      : super(
-          'This email is registered, but your Xlive profile has not been set up yet. Contact support to activate your account.',
-          statusCode: 404,
-        );
-}
+/// Thrown by `POST /auth/login` when the account exists but its email has not
+/// been verified yet (backend responds 403, `error.code: EMAIL_NOT_VERIFIED`).
+class EmailNotVerifiedException extends ApiException {
+  EmailNotVerifiedException({required String message, required this.email})
+      : super(message, statusCode: 403);
 
-class VerificationRequiredException extends ApiException {
-  VerificationRequiredException({
-    required this.userId,
-    required this.identifier,
-    required this.verificationType,
-    required this.password,
-    this.email,
-    this.phone,
-    this.username,
-  }) : super('Verification required', statusCode: 403);
-
-  final String userId;
-  final String identifier;
-  final String verificationType;
-  final String password;
-  final String? email;
-  final String? phone;
-  final String? username;
+  /// The account's email from the 403 body, for any login identifier.
+  final String email;
 }

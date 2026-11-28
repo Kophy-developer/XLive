@@ -11,6 +11,7 @@ import { ReportProfileDialog } from "@/components/report-profile-dialog";
 import { getUserContent, getUserProfile, getUserPresence, followUser, unfollowUser } from "@/lib/api/feed";
 import { getMe, signOut } from "@/lib/api/auth";
 import { getUserFollowers, getUserFollowing, getUserGifts } from "@/lib/api/creator";
+import { enrichGiftRows, parseGiftRows } from "@/lib/gifts";
 import { useAuthStore } from "@/lib/stores";
 import { cloudinaryUrl } from "@/lib/utils";
 import { creatorToolsEnabled } from "@/lib/creator-mode";
@@ -22,7 +23,7 @@ import {
 } from "lucide-react";
 
 type ProfileTab = "posts" | "overview" | "followers" | "following" | "gifts" | "shop";
-type ContentFilter = "all" | "videos" | "clips" | "photos" | "collection";
+type ContentFilter = "all" | "videos" | "clips" | "photos";
 
 const PEOPLE_PAGE_SIZE = 10;
 
@@ -176,7 +177,11 @@ export default function ProfilePage() {
 
   const { data: giftsData } = useQuery({
     queryKey: ["user-gifts", targetId],
-    queryFn: () => getUserGifts(),
+    queryFn: async () => {
+      const raw = await getUserGifts(1, 50);
+      const rows = await enrichGiftRows(parseGiftRows({ data: { docs: raw.docs, totalDocs: raw.totalDocs } }));
+      return { docs: rows, totalDocs: raw.totalDocs || rows.length };
+    },
     enabled: isMe,
   });
 
@@ -234,7 +239,8 @@ export default function ProfilePage() {
     followersQuery.data?.pages[0]?.totalDocs ?? user?.followerCount ?? 0;
   const followingCount =
     followingQuery.data?.pages[0]?.totalDocs ?? user?.followingCount ?? 0;
-  const giftsCount = giftsData?.totalDocs ?? 0;
+  const giftsCount = giftsData?.totalDocs ?? giftsData?.docs?.length ?? 0;
+  const giftRows = giftsData?.docs ?? [];
 
   const rawItems = content?.items ?? [];
   const filteredItems = rawItems.filter((item) => {
@@ -242,13 +248,10 @@ export default function ProfilePage() {
       return item.mediaType === "video" && item.type !== "clip";
     }
     if (contentFilter === "clips") {
-      return item.type === "clip" || Boolean(item.price);
+      return item.type === "clip";
     }
     if (contentFilter === "photos") {
       return item.mediaType === "image";
-    }
-    if (contentFilter === "collection") {
-      return Boolean(item.accessAllowed || item.isOwner);
     }
     return true;
   });
@@ -428,7 +431,6 @@ export default function ProfilePage() {
                 { id: "videos", label: "Videos" },
                 { id: "clips", label: "Clips" },
                 { id: "photos", label: "Photos" },
-                { id: "collection", label: "My Collection" },
               ].map((f) => (
                 <button
                   key={f.id}
@@ -539,15 +541,47 @@ export default function ProfilePage() {
 
         {activeTab === "gifts" && (
           <div className="mt-5">
-            <div className="flex flex-col items-center justify-center rounded-3xl border border-white/10 bg-[#141420]/40 py-16 text-center">
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl brand-gradient text-white shadow-lg shadow-brand-purple/20">
-                <Gift className="h-7 w-7" />
+            {!giftRows.length ? (
+              <div className="flex flex-col items-center justify-center rounded-3xl border border-white/10 bg-[#141420]/40 py-16 text-center">
+                <div className="flex h-14 w-14 items-center justify-center rounded-2xl brand-gradient text-white shadow-lg shadow-brand-purple/20">
+                  <Gift className="h-7 w-7" />
+                </div>
+                <p className="mt-3 font-display text-sm font-bold text-white">No gifts received yet</p>
+                <p className="mt-1 max-w-xs text-xs text-zinc-400">
+                  Gifts sent by viewers during live broadcasts and clips will appear here
+                </p>
               </div>
-              <p className="mt-3 font-display text-sm font-bold text-white">No gifts received yet</p>
-              <p className="mt-1 max-w-xs text-xs text-zinc-400">
-                Gifts sent by viewers during live broadcasts and clips will appear here
-              </p>
-            </div>
+            ) : (
+              <ul className="space-y-2 rounded-3xl border border-white/10 bg-[#141420]/40 p-2">
+                {giftRows.map((g) => (
+                  <li
+                    key={g.id}
+                    className="flex items-center gap-3 rounded-2xl px-3 py-2.5 hover:bg-white/5"
+                  >
+                    {g.iconUrl ? (
+                      <img
+                        src={cloudinaryUrl(g.iconUrl)}
+                        alt=""
+                        className="h-10 w-10 rounded-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-amber-400/15 text-amber-300">
+                        <Gift className="h-4 w-4" />
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-bold text-white">
+                        {g.senderName} sent {g.giftName}
+                      </p>
+                      <p className="truncate text-xs text-zinc-400">
+                        {g.amountPaid ? `${g.amountPaid} coins` : `×${g.quantity}`}
+                      </p>
+                    </div>
+                    <span className="text-xs font-semibold text-white/80">x{g.quantity}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
 

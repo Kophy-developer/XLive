@@ -2,43 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { getStreamGifts } from "@/lib/api/streams";
+import { enrichGiftRows, parseGiftRows, type GiftRow } from "@/lib/gifts";
 import { cloudinaryUrl, cn } from "@/lib/utils";
 import { Gift, X } from "lucide-react";
-
-type GiftRow = {
-  id: string;
-  giftName: string;
-  senderName: string;
-  quantity: number;
-  iconUrl?: string;
-};
-
-function parseGifts(raw: unknown): GiftRow[] {
-  const root = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
-  const data = (root.data && typeof root.data === "object" ? root.data : root) as Record<string, unknown>;
-  const list = Array.isArray(data.docs)
-    ? data.docs
-    : Array.isArray(data.gifts)
-    ? data.gifts
-    : Array.isArray(data.items)
-    ? data.items
-    : Array.isArray(data)
-    ? data
-    : [];
-  return (list as Record<string, unknown>[])
-    .map((g, i) => {
-      const sender = (g.sender && typeof g.sender === "object" ? g.sender : g.user && typeof g.user === "object" ? g.user : {}) as Record<string, unknown>;
-      const gift = (g.gift && typeof g.gift === "object" ? g.gift : {}) as Record<string, unknown>;
-      return {
-        id: String(g.id ?? g._id ?? i),
-        giftName: String(gift.name ?? g.giftName ?? g.name ?? "Gift"),
-        senderName: String(sender.displayName ?? sender.username ?? g.senderName ?? "Viewer"),
-        quantity: Number(g.quantity ?? g.count ?? 1) || 1,
-        iconUrl: gift.iconUrl || g.iconUrl ? String(gift.iconUrl ?? g.iconUrl) : undefined,
-      };
-    })
-    .filter((g) => g.id);
-}
 
 export function LiveGiftHistorySheet({
   streamId,
@@ -57,8 +23,9 @@ export function LiveGiftHistorySheet({
     let cancelled = false;
     setLoading(true);
     getStreamGifts(streamId)
-      .then((res) => {
-        if (!cancelled) setGifts(parseGifts(res));
+      .then((res) => enrichGiftRows(parseGiftRows(res)))
+      .then((rows) => {
+        if (!cancelled) setGifts(rows);
       })
       .catch(() => {
         if (!cancelled) setGifts([]);
@@ -110,8 +77,12 @@ export function LiveGiftHistorySheet({
                     </div>
                   )}
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-bold text-white">{g.giftName}</p>
-                    <p className="truncate text-xs text-zinc-400">{g.senderName}</p>
+                    <p className="truncate text-sm font-bold text-white">
+                      {g.senderName} sent {g.giftName}
+                    </p>
+                    <p className="truncate text-xs text-zinc-400">
+                      {g.quantity > 1 ? `×${g.quantity}` : "Gift"}
+                    </p>
                   </div>
                   <span className="text-xs font-semibold text-white/80">x{g.quantity}</span>
                 </li>

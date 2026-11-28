@@ -173,17 +173,19 @@ class ChatMessage {
   ChatMessage copyWith({
     List<MessageReaction>? reactions,
     String? senderAvatarUrl,
+    String? senderName,
     String? content,
     DateTime? editedAt,
     String? mediaUrl,
     String? mediaType,
+    String? replyToSenderName,
   }) {
     return ChatMessage(
       id: id,
       chatId: chatId,
       content: content ?? this.content,
       senderId: senderId,
-      senderName: senderName,
+      senderName: senderName ?? this.senderName,
       senderAvatarUrl: senderAvatarUrl ?? this.senderAvatarUrl,
       createdAt: createdAt,
       isMine: isMine,
@@ -193,7 +195,7 @@ class ChatMessage {
       editedAt: editedAt ?? this.editedAt,
       replyToMessageId: replyToMessageId,
       replyToContent: replyToContent,
-      replyToSenderName: replyToSenderName,
+      replyToSenderName: replyToSenderName ?? this.replyToSenderName,
     );
   }
 
@@ -311,8 +313,9 @@ class ChatMessage {
       content: ApiJson.pickString(payload, ['content', 'text', 'body']) ?? ApiJson.pickString(json, ['content', 'text', 'body']),
       senderId: senderId,
       senderName: sender == null
-          ? (ApiJson.pickString(payload, ['senderName']) ?? ApiJson.pickString(json, ['senderName']))
-          : ApiJson.pickString(sender, ['displayName', 'username', 'name']),
+          ? (ApiJson.pickString(payload, ['senderName', 'username', 'handle', 'displayName']) ??
+              ApiJson.pickString(json, ['senderName', 'username', 'handle', 'displayName']))
+          : ApiJson.pickString(sender, ['displayName', 'username', 'name', 'handle']),
       senderAvatarUrl: sender == null
           ? (ApiJson.pickString(payload, ['senderAvatarUrl', 'avatarUrl', 'profileImage', 'photoUrl', 'imageUrl']) ??
               ApiJson.pickString(json, ['senderAvatarUrl', 'avatarUrl', 'profileImage', 'photoUrl', 'imageUrl']))

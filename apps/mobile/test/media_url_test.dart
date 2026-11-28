@@ -4,7 +4,7 @@ import 'package:xlive_mobile/core/media/media_url.dart';
 void main() {
   const uuid = 'ea5e3cce-4899-4828-a647-d3ce7a454f28';
   const cloud = 'https://res.cloudinary.com/dlfzn6m9q/video/upload/f_mp4/x-live/$uuid';
-  const host = 'https://store-x-live.4tqepo.easypanel.host/uploads/x-live/$uuid';
+  const host = 'https://xlive-app-bcqre.ondigitalocean.app/uploads/x-live/$uuid';
 
   test('host x-live streamUrl plays from Cloudinary', () {
     expect(playbackVideoUrl(host), cloud);
@@ -31,7 +31,7 @@ void main() {
   });
 
   test('unrelated host files are not rewritten', () {
-    const other = 'https://store-x-live.4tqepo.easypanel.host/uploads/chat/abc.mp4';
+    const other = 'https://xlive-app-bcqre.ondigitalocean.app/uploads/chat/abc.mp4';
     expect(playbackVideoUrl(other), other);
   });
 }

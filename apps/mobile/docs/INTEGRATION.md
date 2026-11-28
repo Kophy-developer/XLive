@@ -7,7 +7,7 @@ Single reference for bridge integration status, hosts, and deferred work.
 | System | URL |
 |--------|-----|
 | Auth (Flowfly) | `https://creative.flowfly.dev/dev` |
-| Bridge / XLive API | `https://store-x-live.4tqepo.easypanel.host` |
+| Bridge / XLive API | `https://xlive-app-bcqre.ondigitalocean.app` |
 | Socket.IO | Same origin as bridge |
 
 ## Auth flow

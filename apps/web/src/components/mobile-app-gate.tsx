@@ -136,7 +136,7 @@ export function MobileAppGate() {
             </p>
             <div className="mt-5 flex flex-col gap-2">
               <a
-                href="https://store-x-live.4tqepo.easypanel.host/download/app"
+                href="https://xlive-app-bcqre.ondigitalocean.app/download/app"
                 target="_blank"
                 rel="noreferrer"
                 className="flex items-center justify-center gap-2 rounded-xl brand-gradient py-3 text-xs font-bold text-white shadow-lg shadow-brand-purple/20"

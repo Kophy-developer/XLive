@@ -5,21 +5,47 @@ import { AuthGuard, PageHeader } from "@/components/auth-guard";
 import { useAuthStore } from "@/lib/stores";
 import { updateMe } from "@/lib/api/auth";
 import { creatorToolsEnabled, setCreatorMode } from "@/lib/creator-mode";
-import { Eye, Globe, Shield, Sparkles } from "lucide-react";
+import { normalizeLiveLang } from "@/lib/live-languages";
+import { Eye, Globe, Languages, Sparkles } from "lucide-react";
+
+const LANGUAGE_OPTIONS = [
+  { value: "en", label: "English" },
+  { value: "es", label: "Spanish" },
+  { value: "fr", label: "French" },
+  { value: "zh", label: "Mandarin Chinese" },
+] as const;
 
 export default function PreferencesSettingsPage() {
   const user = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
 
   const [creatorMode, setCreatorModeState] = useState(() => creatorToolsEnabled(user));
+  const [language, setLanguage] = useState(() => normalizeLiveLang(user?.language) || "en");
   const [settings, setSettings] = useState({
     discoverable: user?.settings?.discoverable ?? true,
-    showAdultContent: user?.settings?.showAdultContent ?? false,
     postVisibilityDefault: user?.settings?.postVisibilityDefault ?? "everyone",
   });
   const [saving, setSaving] = useState(false);
 
-  async function handleToggle(key: "discoverable" | "showAdultContent") {
+  async function handleLanguageChange(val: string) {
+    const next = normalizeLiveLang(val) || "en";
+    const prev = language;
+    setLanguage(next);
+    setSaving(true);
+    try {
+      const updated = await updateMe({ language: next });
+      setUser({
+        ...updated,
+        language: normalizeLiveLang(updated.language) || next,
+      });
+    } catch {
+      setLanguage(prev);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleToggle(key: "discoverable") {
     const next = { ...settings, [key]: !settings[key] };
     setSettings(next);
     setSaving(true);
@@ -85,6 +111,32 @@ export default function PreferencesSettingsPage() {
             />
           </div>
 
+          <div className="py-3.5 space-y-2 first:pt-1">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/5 text-brand-purple">
+                <Languages className="h-4 w-4" />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-white">App language</p>
+                <p className="text-[11px] text-zinc-400">
+                  Host: speech language. Viewer: language you hear/read
+                </p>
+              </div>
+            </div>
+            <select
+              value={language}
+              onChange={(e) => void handleLanguageChange(e.target.value)}
+              disabled={saving}
+              className="w-full h-10 rounded-2xl border border-white/10 bg-[#161622] px-3 text-xs font-semibold text-white focus:outline-none focus:ring-1 focus:ring-brand-purple"
+            >
+              {LANGUAGE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <div className="flex items-center justify-between py-3.5 first:pt-1 last:pb-1">
             <div className="flex items-center gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/5 text-brand-purple">
@@ -99,25 +151,6 @@ export default function PreferencesSettingsPage() {
               type="checkbox"
               checked={settings.discoverable}
               onChange={() => handleToggle("discoverable")}
-              disabled={saving}
-              className="h-5 w-5 rounded-md accent-brand-purple cursor-pointer"
-            />
-          </div>
-
-          <div className="flex items-center justify-between py-3.5">
-            <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/5 text-brand-purple">
-                <Shield className="h-4 w-4" />
-              </div>
-              <div>
-                <p className="text-xs font-bold text-white">Adult Content Filter</p>
-                <p className="text-[11px] text-zinc-400">Allow 18+ sensitive media in your feeds</p>
-              </div>
-            </div>
-            <input
-              type="checkbox"
-              checked={settings.showAdultContent}
-              onChange={() => handleToggle("showAdultContent")}
               disabled={saving}
               className="h-5 w-5 rounded-md accent-brand-purple cursor-pointer"
             />

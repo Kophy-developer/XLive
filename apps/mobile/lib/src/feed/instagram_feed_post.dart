@@ -9,10 +9,12 @@ import '../../core/widgets/media_icon_scrim.dart';
 import '../../core/media/feed_sound_store.dart';
 import '../../core/media/media_url.dart';
 import '../../core/media/media_url_cache.dart';
+import '../../core/media/saved_media_store.dart';
 import '../../core/session/auth_session.dart';
 import '../../core/share/share_links.dart';
 import '../../core/utils/relative_time.dart';
 import '../../core/widgets/user_avatar.dart';
+import '../../features/feed/feed_album.dart';
 import '../../features/feed/feed_repository.dart';
 import '../../features/feed/models/feed_models.dart';
 import '../../features/social/social_repository.dart';
@@ -47,9 +49,16 @@ class _InstagramFeedPostState extends State<InstagramFeedPost> {
   late bool _liked;
   late int _likeCount;
   late int _commentCount;
+  late bool _saved;
   bool _liking = false;
+  bool _saving = false;
 
   FeedItem get item => widget.item;
+
+  bool get _canSave =>
+      item.type == FeedContentType.video && !item.isLocked && feedSaveTargetIds(item).isNotEmpty;
+
+  List<String> get _saveIds => feedSaveTargetIds(item);
 
   @override
   void initState() {
@@ -57,7 +66,12 @@ class _InstagramFeedPostState extends State<InstagramFeedPost> {
     _liked = false;
     _likeCount = item.likeCount;
     _commentCount = item.commentCount;
+    _saved = SavedMediaStore.instance.isSavedAll(_saveIds);
     _refreshLike();
+    unawaited(SavedMediaStore.instance.ensureLoaded().then((_) {
+      if (!mounted) return;
+      setState(() => _saved = SavedMediaStore.instance.isSavedAll(_saveIds));
+    }));
   }
 
   @override
@@ -67,6 +81,7 @@ class _InstagramFeedPostState extends State<InstagramFeedPost> {
       _liked = false;
       _likeCount = item.likeCount;
       _commentCount = item.commentCount;
+      _saved = SavedMediaStore.instance.isSavedAll(_saveIds);
       _refreshLike();
       return;
     }
@@ -170,6 +185,34 @@ class _InstagramFeedPostState extends State<InstagramFeedPost> {
     }
   }
 
+  Future<void> _toggleSave() async {
+    if (_saving || !_canSave) return;
+    if (!AuthSession.instance.isSignedIn) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sign in to save posts.')));
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      final next = await SavedMediaStore.instance.toggleAll(
+        targetType: item.targetType,
+        targetIds: _saveIds,
+        canView: !item.isLocked,
+      );
+      if (!mounted) return;
+      setState(() => _saved = next);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(next ? 'Saved' : 'Removed from Saved')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(friendlyApiMessage(e))),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   String get _creatorName {
     final me = AuthSession.instance.user;
     if (me != null && item.creatorId != null && item.creatorId == me.id) {
@@ -253,6 +296,13 @@ class _InstagramFeedPostState extends State<InstagramFeedPost> {
                 icon: Icons.ios_share_rounded,
                 onTap: _share,
               ),
+              if (_canSave) ...[
+                const SizedBox(width: 8),
+                _FeedEngagementAction(
+                  icon: _saved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
+                  onTap: _toggleSave,
+                ),
+              ],
               const Spacer(),
               if (item.type == FeedContentType.stream)
                 Container(

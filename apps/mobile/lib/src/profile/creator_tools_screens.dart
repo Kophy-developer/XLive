@@ -213,15 +213,21 @@ class _PerformanceAnalyticsScreenState extends State<PerformanceAnalyticsScreen>
     }
   }
 
-  String _metric(String key) {
-    final value = _analytics?.getMetric(key) ?? 0;
-    return _formatMetric(value);
-  }
-
   String _formatMetric(num value) {
     if (value is double && value % 1 != 0) return value.toStringAsFixed(1);
     return '$value';
   }
+
+  String get _profileViews => _formatMetric(_analytics?.profileViews ?? 0);
+  String get _likes => _formatMetric(_analytics?.likes ?? 0);
+  String get _comments => _formatMetric(_analytics?.comments ?? 0);
+  String get _shares => _formatMetric(_analytics?.shares ?? 0);
+  String get _liveStreams => _formatMetric(_analytics?.liveStreams ?? 0);
+  String get _streamJoins => _formatMetric(_analytics?.streamJoins ?? 0);
+  String get _clipViews => _formatMetric(_analytics?.clipsMetric ?? 0);
+  String get _postViews => _formatMetric(_analytics?.postViews ?? 0);
+  String get _watchTimeMinutes => _formatMetric((((_analytics?.watchTimeSeconds ?? 0).toDouble()) / 60).round());
+  String get _giftRevenue => 'USD ${(_analytics?.giftRevenue ?? 0).toDouble().toStringAsFixed(2)}';
 
   String _periodTitle(DateTime now) {
     const short = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -270,26 +276,31 @@ class _PerformanceAnalyticsScreenState extends State<PerformanceAnalyticsScreen>
           }),
           const SizedBox(height: 20),
           _analyticsGridRow(
-            _metricCell('Profile Views', Icons.person_outline_rounded, _metric('profile')),
-            _metricCell('Likes', Icons.favorite_border_rounded, _metric('like')),
+            _metricCell('Profile Views', Icons.person_outline_rounded, _profileViews),
+            _metricCell('Likes', Icons.favorite_border_rounded, _likes),
           ),
           Divider(height: 1, thickness: 1, color: Colors.grey.shade200),
           _analyticsGridRow(
-            _metricCell('Comments', Icons.chat_bubble_outline_rounded, _metric('comment')),
-            _metricCell('Shares', Icons.redo_rounded, _metric('share')),
+            _metricCell('Comments', Icons.chat_bubble_outline_rounded, _comments),
+            _metricCell('Shares', Icons.redo_rounded, _shares),
           ),
           Divider(height: 1, thickness: 1, color: Colors.grey.shade200),
           _analyticsGridRow(
-            _metricCell('Subscribers', Icons.people_outline_rounded, _metric('subscriber')),
-            _metricCell('Clips', Icons.videocam_outlined, _formatMetric(_analytics?.clipsMetric ?? 0)),
+            _metricCell('Post Views', Icons.photo_outlined, _postViews),
+            _metricCell('Clip Views', Icons.videocam_outlined, _clipViews),
           ),
           Divider(height: 1, thickness: 1, color: Colors.grey.shade200),
           const SizedBox(height: 16),
           Text('Live Streams', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: Colors.grey.shade600)),
           const SizedBox(height: 12),
           _analyticsGridRow(
-            _metricCell('Time Spent', Icons.schedule_outlined, '${_metric('time')} hrs'),
-            _metricCell('Views', Icons.remove_red_eye_outlined, _metric('view')),
+            _metricCell('Streams', Icons.sensors_rounded, _liveStreams),
+            _metricCell('Joins', Icons.remove_red_eye_outlined, _streamJoins),
+          ),
+          Divider(height: 1, thickness: 1, color: Colors.grey.shade200),
+          _analyticsGridRow(
+            _metricCell('Watch time (min)', Icons.schedule_outlined, _watchTimeMinutes),
+            _metricCell('Gift revenue', Icons.card_giftcard_rounded, _giftRevenue),
           ),
           Divider(height: 1, thickness: 1, color: Colors.grey.shade200),
         ],

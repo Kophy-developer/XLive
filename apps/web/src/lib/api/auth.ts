@@ -1,171 +1,165 @@
-import { authApi, api, withQuery } from "./client";
+import { ApiError, authApi, api } from "./client";
 import { session } from "../session";
 import type { XLiveUser } from "../types";
 import { normalizePublicUser } from "./feed";
 
-export type AuthLoginResult = {
-  userId: string;
-  identifier: string;
-  needsVerification: boolean;
-  emailVerified?: boolean;
-  phoneVerified?: boolean;
-};
+/** Response envelope used by every /api/x-live endpoint (confirmed against the live server). */
+type Envelope<T> = { message: string; status: boolean; statusCode: number; data: T; error: unknown };
 
-export type BridgeTokenResult = {
-  token: string;
-  userId: string;
-  user?: XLiveUser;
-};
+/** Success `data` of POST /auth/verify-email and POST /auth/login: `{ token, user }`. */
+type TokenData = { token: string; user: Record<string, unknown> };
 
-export async function checkAvailability(payload: {
-  email?: string;
-  username?: string;
-  phone?: string;
-}) {
-  return authApi.post<{ available: boolean }>("/auth/check", payload);
+/** Backend password rule (POST /auth/create, /auth/reset-password, /auth/change-password validation). */
+export const PASSWORD_MIN_LENGTH = 8;
+
+/** Says exactly what to fix when `password` breaks the backend rule, else null. */
+export function passwordRuleError(password: string): string | null {
+  const missing = PASSWORD_MIN_LENGTH - password.length;
+  return missing > 0 ? `Password must be at least ${PASSWORD_MIN_LENGTH} characters. Add ${missing} more.` : null;
 }
 
-export async function createAccount(payload: Record<string, string>) {
-  return authApi.post<{ userId: string }>("/auth/create", payload);
-}
-
-export async function requestVerification(payload: { identifier: string; type: "email" | "phone" }) {
-  return authApi.post<unknown>("/auth/verify-request", payload);
-}
-
-export async function verifyCode(payload: { identifier: string; code: string }) {
-  return authApi.post<unknown>("/auth/verify-code", payload);
-}
-
-export async function login(identifier: string, password: string) {
-  return authApi.post<AuthLoginResult>("/auth/login", { identifier, password });
-}
-
-export async function requestPasswordReset(identifier: string) {
-  const trimmed = identifier.trim();
-  let email = trimmed;
-  if (!trimmed.includes("@")) {
-    const resolved = await resolveUsernameEmail(trimmed);
-    if (resolved) email = resolved;
+/**
+ * Password text from a 400 validation error: `error.password` on /auth/create,
+ * `error[""]` (e.g. "newPassword must be at least 8 characters") on reset/change.
+ */
+export function serverPasswordError(err: unknown): string | null {
+  if (!(err instanceof ApiError)) return null;
+  const fields = (err.body as { error?: Record<string, unknown> } | null)?.error;
+  for (const key of ["password", ""]) {
+    const value = fields?.[key];
+    if (typeof value === "string" && value.includes("assword")) return value;
   }
-  return authApi.post<unknown>("/password/reset-request", { email, identifier: email });
+  return null;
 }
 
-export async function resetPassword(payload: { identifier: string; code: string; password: string }) {
-  return authApi.post<unknown>("/password/reset", payload);
+/** 403 body of POST /auth/login for an unverified account (any identifier). */
+type EmailNotVerifiedBody = { error: { code: "EMAIL_NOT_VERIFIED"; email: string; verificationSent: boolean } };
+
+/** Thrown when POST /auth/login answers 403: the account's email is not verified yet. */
+export class EmailNotVerifiedError extends ApiError {
+  /** The account's email, from the 403 body, so the code can be (re)sent there. */
+  email: string;
+
+  constructor(err: ApiError) {
+    super(err.message, err.status, err.body);
+    this.email = (err.body as EmailNotVerifiedBody).error.email;
+  }
 }
 
-export async function resolveUsernameEmail(username: string): Promise<string | undefined> {
-  const query = username.trim();
-  if (!query) return undefined;
+function startSession(res: Envelope<TokenData>, identifier: string): XLiveUser {
+  const user = normalizePublicUser(res.data.user);
+  session.setJwt(res.data.token);
+  session.setUserId(user.id);
+  session.setIdentifier(identifier);
+  return user;
+}
+
+export function normalizeAuthPhone(raw: string, defaultCountryCode = "234"): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  const digits = trimmed.replace(/\D/g, "");
+  if (!digits) return "";
+  if (trimmed.startsWith("+")) return `+${digits}`;
+  if (digits.startsWith(defaultCountryCode)) return `+${digits}`;
+  if (digits.startsWith("0") && digits.length >= 10) {
+    return `+${defaultCountryCode}${digits.slice(1)}`;
+  }
+  if (digits.length >= 10) return `+${defaultCountryCode}${digits}`;
+  return `+${digits}`;
+}
+
+/** POST /auth/check — whether an email or phone number is already registered. */
+/** POST /auth/check: whether an email or phone number is already registered. */
+export async function checkExists(variable: string): Promise<boolean> {
+  const res = await authApi.post<Envelope<{ exists: boolean }>>("/auth/check", { variable: variable.trim() });
+  return res.data.exists;
+}
+
+/** Throws a 409 ApiError when the email or phone is already registered. */
+export async function checkAvailability(payload: { email: string; phone?: string }) {
+  if (await checkExists(payload.email)) {
+    throw new ApiError("This email is already registered. Sign in or reset your password instead.", 409);
+  }
+  if (payload.phone && (await checkExists(payload.phone))) {
+    throw new ApiError("This phone number is already registered.", 409);
+  }
+}
+
+/**
+ * POST /auth/create: registers the account and emails a 6-digit code. No token is
+ * issued until the email is verified. Duplicate usernames are rejected here, and the
+ * server's message is surfaced through ApiError.
+ */
+export async function createAccount(payload: {
+  firstName: string;
+  lastName: string;
+  username: string;
+  email: string;
+  phone: string;
+  password: string;
+}): Promise<void> {
+  await authApi.post<Envelope<unknown>>("/auth/create", {
+    first_name: payload.firstName.trim(),
+    last_name: payload.lastName.trim(),
+    username: payload.username.trim(),
+    email: payload.email.trim(),
+    phone: normalizeAuthPhone(payload.phone),
+    password: payload.password,
+  });
+}
+
+/** POST /auth/resend-verification: emails a fresh 6-digit code. */
+export async function resendVerification(email: string) {
+  await authApi.post<Envelope<unknown>>("/auth/resend-verification", { email: email.trim() });
+}
+
+/** POST /auth/verify-email: activates the account and starts the session with the returned JWT. */
+export async function verifyEmail(email: string, code: string): Promise<XLiveUser> {
+  const res = await authApi.post<Envelope<TokenData>>("/auth/verify-email", {
+    email: email.trim(),
+    code: code.trim(),
+  });
+  return startSession(res, email.trim());
+}
+
+/**
+ * POST /auth/login with email, username or phone plus password, then starts the session.
+ * Throws EmailNotVerifiedError on 403.
+ */
+export async function signIn(identifier: string, password: string): Promise<XLiveUser> {
+  const id = identifier.trim();
+  const body: Record<string, string> = { password };
+  if (id.includes("@")) body.email = id;
+  else if (/^\+?\d{7,}$/.test(id.replace(/[\s\-()]/g, ""))) body.phone = normalizeAuthPhone(id);
+  else body.username = id;
   try {
-    const res = await api.get<Record<string, unknown> | Record<string, unknown>[]>(
-      withQuery("/api/x-live/users/search", { q: query, limit: 5 }),
-      false
-    );
-    const list: Record<string, unknown>[] = Array.isArray(res)
-      ? (res as Record<string, unknown>[])
-      : Array.isArray((res as Record<string, unknown>)?.data)
-      ? ((res as Record<string, unknown>).data as Record<string, unknown>[])
-      : Array.isArray((res as Record<string, unknown>)?.users)
-      ? ((res as Record<string, unknown>).users as Record<string, unknown>[])
-      : [];
-    const normalized = query.toLowerCase();
-    const match = list.find(
-      (u) => typeof u?.username === "string" && u.username.toLowerCase() === normalized
-    ) ?? list[0];
-    return typeof match?.email === "string" ? match.email : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-export async function bridgeToken(payload: Record<string, string>): Promise<BridgeTokenResult> {
-  const res = await api.post<Record<string, unknown>>("/api/x-live/auth/token", payload, false);
-  const data = (res && typeof res === "object" && "data" in res && res.data && typeof res.data === "object"
-    ? res.data
-    : res) as Record<string, unknown>;
-  const token = typeof data?.token === "string" ? data.token : "";
-  if (!token) {
-    throw new Error(typeof res?.message === "string" ? res.message : "Bridge token missing");
-  }
-  const user = data?.user as XLiveUser | undefined;
-  const userId = (user?.id ?? data?.userId ?? session.getUserId() ?? "") as string;
-  return {
-    token,
-    userId,
-    user,
-  };
-}
-
-export async function completeAuth(loginResult: AuthLoginResult & { username?: string }) {
-  let bridgePayload: Record<string, string>;
-
-  if (loginResult.username) {
-    bridgePayload = { username: loginResult.username };
-  } else if (loginResult.identifier?.includes("@")) {
-    bridgePayload = { email: loginResult.identifier };
-  } else if (loginResult.identifier?.startsWith("+") || /^\d{7,}$/.test(loginResult.identifier || "")) {
-    bridgePayload = { phone: loginResult.identifier };
-  } else if (loginResult.userId) {
-    bridgePayload = { id: loginResult.userId };
-  } else {
-    bridgePayload = { identifier: loginResult.identifier };
-  }
-
-  const bridge = await bridgeToken(bridgePayload);
-  session.setJwt(bridge.token);
-  session.setUserId(bridge.userId || loginResult.userId);
-  session.setIdentifier(loginResult.identifier);
-  return bridge;
-}
-
-export async function signIn(identifier: string, password: string) {
-  const trimmed = identifier.trim();
-  let loginIdentifier = trimmed;
-  let resolvedEmail: string | undefined;
-  let resolvedUsername: string | undefined;
-
-  const isEmail = trimmed.includes("@");
-  const isPhone = !isEmail && /^\+?\d{7,}$/.test(trimmed);
-
-  if (!isEmail && !isPhone) {
-    resolvedUsername = trimmed;
-    resolvedEmail = await resolveUsernameEmail(trimmed);
-    if (resolvedEmail) {
-      loginIdentifier = resolvedEmail;
-    }
-  } else if (isEmail) {
-    resolvedEmail = trimmed;
-  }
-
-  let loginResult: AuthLoginResult;
-  try {
-    loginResult = await login(loginIdentifier, password);
+    const res = await authApi.post<Envelope<TokenData>>("/auth/login", body);
+    return startSession(res, id);
   } catch (err) {
-    if (!isEmail && !isPhone && loginIdentifier !== trimmed) {
-      try {
-        loginResult = await login(trimmed, password);
-      } catch {
-        throw err;
-      }
-    } else {
-      throw err;
-    }
-  }
-
-  if (loginResult.needsVerification) {
-    const err = new Error("Verification required") as Error & { needsVerification: boolean; identifier: string };
-    err.needsVerification = true;
-    err.identifier = loginResult.identifier || loginIdentifier;
+    if (err instanceof ApiError && err.status === 403) throw new EmailNotVerifiedError(err);
     throw err;
   }
+}
 
-  return completeAuth({
-    ...loginResult,
-    identifier: resolvedEmail ?? loginResult.identifier ?? loginIdentifier,
-    username: resolvedUsername,
+/** POST /auth/forgot-password: emails a 6-digit reset code. */
+export async function requestPasswordReset(email: string) {
+  await authApi.post<Envelope<{ sent: boolean; expiresInMinutes: number }>>("/auth/forgot-password", {
+    email: email.trim(),
   });
+}
+
+/** POST /auth/reset-password with the 6-digit code from forgot-password. */
+export async function resetPassword(payload: { email: string; code: string; newPassword: string }) {
+  await authApi.post<Envelope<unknown>>("/auth/reset-password", {
+    email: payload.email.trim(),
+    code: payload.code.trim(),
+    newPassword: payload.newPassword,
+  });
+}
+
+/** POST /auth/change-password (Bearer) for the signed-in user. */
+export async function changePassword(payload: { currentPassword: string; newPassword: string }) {
+  await authApi.post<Envelope<unknown>>("/auth/change-password", payload, true);
 }
 
 export async function signOut() {

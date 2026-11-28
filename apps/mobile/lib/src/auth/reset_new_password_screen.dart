@@ -19,6 +19,8 @@ class _ResetNewPasswordScreenState extends State<ResetNewPasswordScreen> {
   bool _o1 = true;
   bool _o2 = true;
   bool _submitting = false;
+  bool _showErrors = false;
+  String? _serverPasswordError;
   final _passwordCtrl = TextEditingController();
   final _confirmCtrl = TextEditingController();
 
@@ -29,30 +31,41 @@ class _ResetNewPasswordScreenState extends State<ResetNewPasswordScreen> {
     super.dispose();
   }
 
+  String? get _passwordError {
+    final text = _passwordCtrl.text;
+    if (_serverPasswordError != null) return _serverPasswordError;
+    return _showErrors || text.isNotEmpty ? validateAuthPassword(text) : null;
+  }
+
+  String? get _confirmError {
+    final confirm = _confirmCtrl.text;
+    if (!_showErrors && confirm.isEmpty) return null;
+    return confirm == _passwordCtrl.text ? null : authPasswordMismatchMessage;
+  }
+
   Future<void> _submit() async {
     final password = _passwordCtrl.text;
-    final confirm = _confirmCtrl.text;
-    final error = validateAuthPassword(password);
-    if (error != null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
-      return;
-    }
-    if (password != confirm) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Passwords do not match.')));
+    if (validateAuthPassword(password) != null || password != _confirmCtrl.text) {
+      setState(() => _showErrors = true);
       return;
     }
     setState(() => _submitting = true);
     try {
       await AuthSession.instance.authRepository.resetPassword(
-        identifier: widget.identifier,
+        email: widget.identifier,
         code: widget.code.replaceAll(RegExp(r'\D'), ''),
-        password: password,
+        newPassword: password,
       );
       if (!mounted) return;
       Navigator.pushReplacement(context, MaterialPageRoute<void>(builder: (_) => const ResetSuccessScreen()));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(authErrorMessage(e))));
+      final passwordError = serverPasswordError(e);
+      if (passwordError != null) {
+        setState(() => _serverPasswordError = passwordError);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(authErrorMessage(e))));
+      }
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
@@ -86,7 +99,9 @@ class _ResetNewPasswordScreenState extends State<ResetNewPasswordScreen> {
                   TextField(
                     controller: _passwordCtrl,
                     obscureText: _o1,
+                    onChanged: (_) => setState(() => _serverPasswordError = null),
                     decoration: authInputDecoration(hintText: 'New Password').copyWith(
+                      errorText: _passwordError,
                       suffixIcon: IconButton(
                         onPressed: () => setState(() => _o1 = !_o1),
                         icon: Icon(_o1 ? Icons.visibility_off_outlined : Icons.visibility_outlined, color: AuthColors.grey, size: 22),
@@ -97,7 +112,9 @@ class _ResetNewPasswordScreenState extends State<ResetNewPasswordScreen> {
                   TextField(
                     controller: _confirmCtrl,
                     obscureText: _o2,
+                    onChanged: (_) => setState(() {}),
                     decoration: authInputDecoration(hintText: 'Confirm Password').copyWith(
+                      errorText: _confirmError,
                       suffixIcon: IconButton(
                         onPressed: () => setState(() => _o2 = !_o2),
                         icon: Icon(_o2 ? Icons.visibility_off_outlined : Icons.visibility_outlined, color: AuthColors.grey, size: 22),

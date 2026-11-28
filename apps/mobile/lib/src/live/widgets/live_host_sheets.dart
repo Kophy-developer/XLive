@@ -817,8 +817,8 @@ class _LiveGiftHistorySheetState extends State<_LiveGiftHistorySheet> {
                                 leading: gift.iconUrl == null
                                     ? const Icon(Icons.card_giftcard_rounded)
                                     : CircleAvatar(backgroundImage: NetworkImage(gift.iconUrl!)),
-                                title: Text(gift.giftName ?? 'Gift'),
-                                subtitle: Text(gift.senderName ?? 'Viewer'),
+                                title: Text('${gift.senderName ?? 'Viewer'} sent ${gift.giftName ?? 'Gift'}'),
+                                subtitle: Text(gift.quantity > 1 ? '×${gift.quantity}' : 'Gift'),
                                 trailing: Text('x${gift.quantity}'),
                               );
                             },

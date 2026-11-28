@@ -209,18 +209,13 @@ class _OtherUserProfileScreenState extends State<OtherUserProfileScreen> {
     final userId = widget.args.userId;
     setState(() => _loadingContent = true);
     try {
-      List<ContentItem> content;
-      if (_tab == 4) {
-        content = await _social.getUserCollection(userId);
-      } else {
-        final tab = switch (_tab) {
-          1 => 'videos',
-          2 => 'clips',
-          3 => 'photos',
-          _ => 'all',
-        };
-        content = await _social.getUserContent(userId, tab: tab);
-      }
+      final tab = switch (_tab) {
+        1 => 'videos',
+        2 => 'clips',
+        3 => 'photos',
+        _ => 'all',
+      };
+      final content = await _social.getUserContent(userId, tab: tab);
       if (!mounted) return;
       final visible = content.where((c) => !_removedContentIds.contains(c.id)).toList();
       _removedContentIds.removeWhere((id) => !content.any((c) => c.id == id));
@@ -955,7 +950,6 @@ class _OtherUserProfileScreenState extends State<OtherUserProfileScreen> {
                       _mainTab(1, Icons.movie_filter_outlined, 'Videos'),
                       _mainTabClips(),
                       _mainTab(3, Icons.photo_outlined, 'Photos'),
-                      _mainTab(4, Icons.collections_outlined, 'Collection'),
                     ],
                   ),
                   Container(height: 1, color: Colors.grey.shade200),
@@ -1081,7 +1075,6 @@ class _OtherUserProfileScreenState extends State<OtherUserProfileScreen> {
                 1 => 'No post yet',
                 2 => 'No clips yet',
                 3 => 'No photos yet',
-                4 => 'No collection items yet',
                 _ => 'No content yet',
               },
               style: TextStyle(fontSize: 16, color: Colors.grey.shade600),

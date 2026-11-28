@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../core/network/api_json.dart';
 import '../../core/notifications/in_app_notification_store.dart';
@@ -14,12 +13,10 @@ import '../chats/group_chat_screen.dart';
 import '../live/live_stream_flow.dart';
 import '../live/widgets/stream_invite_dialog.dart';
 import '../social/social_api_screens.dart';
-import '../../core/network/api_friendly_messages.dart';
 
 const _purple = Color(0xFF8A2DDC);
 const _sky = Color(0xFF35D3FB);
 const _black = Color(0xFF0A0A0A);
-const _light = Color(0xFFF6F6F6);
 
 class PushInboxScreen extends StatefulWidget {
   const PushInboxScreen({super.key});
@@ -32,31 +29,24 @@ class _PushInboxScreenState extends State<PushInboxScreen> {
   final _notificationsRepo = NotificationsRepository();
   final _store = InAppNotificationStore.instance;
   final _push = PushNotificationService.instance;
-  bool _pushLoading = true;
-  bool _syncing = false;
-  bool? _pushEnabled;
-  String? _pushError;
 
   @override
   void initState() {
     super.initState();
     _store.bindSocket();
     _store.addListener(_onStoreChanged);
-    _push.addListener(_onPushChanged);
-    _loadPushStatus();
     unawaited(AuthSession.instance.refreshNotificationUnread());
     _store.hydrateFromApi().then((_) {
       if (mounted) setState(() {});
     });
     if (_push.snapshot.signedIn) {
-      unawaited(_resync(silent: true));
+      unawaited(_push.syncRegistration(force: true));
     }
   }
 
   @override
   void dispose() {
     _store.removeListener(_onStoreChanged);
-    _push.removeListener(_onPushChanged);
     super.dispose();
   }
 
@@ -64,63 +54,11 @@ class _PushInboxScreenState extends State<PushInboxScreen> {
     if (mounted) setState(() {});
   }
 
-  void _onPushChanged() {
-    if (mounted) setState(() {});
-  }
-
-  Future<void> _resync({bool silent = false}) async {
-    if (_syncing) return;
-    setState(() => _syncing = true);
-    final snap = await _push.syncRegistration(force: true);
-    if (!mounted) return;
-    setState(() {
-      _syncing = false;
-      _pushEnabled = snap.serverEnabled ?? _pushEnabled;
-    });
-    if (!silent && mounted) {
-      final ok = snap.registered && snap.lastError == null;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            ok
-                ? 'Device registered for push (${snap.tokenPreview ?? 'token ok'})'
-                : (snap.lastError ?? 'Push registration failed'),
-          ),
-        ),
-      );
-    }
-  }
-
-  Future<void> _testLocal() async {
-    try {
-      await _push.showLocalTestNotification();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Local test notification sent')),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(friendlyApiMessage(e))),
-      );
-    }
-  }
-
-  void _copyTokenPreview() {
-    final token = _push.snapshot.tokenPreview;
-    if (token == null || token.isEmpty) return;
-    Clipboard.setData(ClipboardData(text: token));
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Token preview copied')),
-    );
-  }
-
   Future<void> _openEvent(InAppNotification event) async {
     var payload = Map<String, dynamic>.from(event.payload);
-    final hasDeepLink = ApiJson.pickString(payload, ['chatId', 'groupId', 'streamId', 'targetUrl']) != null;
     final notificationId =
         ApiJson.pickString(payload, ['notificationId', 'id']) ?? (event.id.startsWith('notif_') ? null : event.id);
-    if (!hasDeepLink && notificationId != null && notificationId.isNotEmpty) {
+    if (notificationId != null && notificationId.isNotEmpty) {
       try {
         final full = await _notificationsRepo.getNotification(notificationId);
         if (full != null) {
@@ -132,11 +70,15 @@ class _PushInboxScreenState extends State<PushInboxScreen> {
             if (full.targetUrl != null) 'targetUrl': full.targetUrl,
             'notificationId': full.id,
           };
-          unawaited(_notificationsRepo.markRead(full.id).then((_) {
-            return AuthSession.instance.refreshNotificationUnread();
-          }));
         }
       } catch (_) {}
+      unawaited(() async {
+        try {
+          await _notificationsRepo.markRead(notificationId);
+          _store.markLocalRead(event.id);
+          await AuthSession.instance.refreshNotificationUnread();
+        } catch (_) {}
+      }());
     }
     if (!mounted) return;
     switch (event.type) {
@@ -287,131 +229,41 @@ class _PushInboxScreenState extends State<PushInboxScreen> {
     return '${diff.inDays}d ago';
   }
 
-  Future<void> _loadPushStatus() async {
-    setState(() {
-      _pushLoading = true;
-      _pushError = null;
-    });
-    try {
-      final status = await _notificationsRepo.getStatus();
-      if (!mounted) return;
-      setState(() {
-        _pushEnabled = status.enabled;
-        _pushLoading = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _pushLoading = false;
-        _pushError = friendlyApiMessage(e);
-      });
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final events = _store.events;
-    final snap = _push.snapshot;
     return XLiveSubpage(
       title: 'Notifications',
+      actions: [
+        TextButton(
+          onPressed: () async {
+            try {
+              await _notificationsRepo.markAllRead();
+              _store.markAllLocalRead();
+              await AuthSession.instance.refreshNotificationUnread();
+            } catch (_) {}
+          },
+          child: const Text('Mark all read'),
+        ),
+        IconButton(
+          tooltip: 'Notification settings',
+          onPressed: () => Navigator.pushNamed(context, '/profile/notifications'),
+          icon: const Icon(Icons.settings_outlined),
+        ),
+      ],
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: _light,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0x1A0A0A0A)),
-              ),
-              child: _pushLoading
-                  ? const Row(
-                      children: [
-                        SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)),
-                        SizedBox(width: 12),
-                        Text('Checking push status…'),
-                      ],
-                    )
-                  : _pushError != null
-                      ? Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(_pushError!, style: TextStyle(color: Colors.grey.shade800)),
-                            TextButton(onPressed: _loadPushStatus, child: const Text('Retry')),
-                          ],
-                        )
-                      : Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Icon(
-                                  _pushEnabled == true ? Icons.notifications_active_rounded : Icons.notifications_off_outlined,
-                                  color: _pushEnabled == true ? _purple : Colors.grey,
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Text(
-                                    _pushEnabled == true ? 'Push notifications enabled' : 'Push notifications disabled',
-                                    style: const TextStyle(fontWeight: FontWeight.w600, color: _black),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            _diagLine('Firebase', snap.firebaseReady ? 'ready' : 'not ready'),
-                            _diagLine('Service', snap.serviceReady ? 'ready' : 'not ready'),
-                            _diagLine('Signed in', snap.signedIn ? 'yes' : 'no'),
-                            _diagLine('Permission', snap.permission),
-                            _diagLine('Device registered', snap.registered ? 'yes' : 'no'),
-                            _diagLine('Token', snap.tokenPreview ?? 'none'),
-                            if (snap.lastError != null) ...[
-                              const SizedBox(height: 8),
-                              Text(
-                                snap.lastError!,
-                                style: TextStyle(color: Colors.red.shade700, height: 1.35),
-                              ),
-                            ],
-                            const SizedBox(height: 12),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: [
-                                FilledButton(
-                                  onPressed: _syncing ? null : () => _resync(),
-                                  style: FilledButton.styleFrom(backgroundColor: _purple),
-                                  child: Text(_syncing ? 'Registering…' : 'Register device'),
-                                ),
-                                OutlinedButton(
-                                  onPressed: _testLocal,
-                                  child: const Text('Test local alert'),
-                                ),
-                                if (snap.tokenPreview != null)
-                                  TextButton(
-                                    onPressed: _copyTokenPreview,
-                                    child: const Text('Copy token preview'),
-                                  ),
-                              ],
-                            ),
-                          ],
-                        ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-            child: Text('In-app events', style: TextStyle(fontWeight: FontWeight.w700, color: Colors.grey.shade800)),
-          ),
           Expanded(
             child: events.isEmpty
                 ? const _PushInboxEmptyBody()
                 : ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
                     itemCount: events.length,
                     separatorBuilder: (_, index) => const SizedBox(height: 8),
                     itemBuilder: (_, i) {
                       final event = events[i];
+                      final unread = ApiJson.pickString(event.payload, ['readAt']) == null;
                       return Material(
                         color: Colors.transparent,
                         child: InkWell(
@@ -420,7 +272,7 @@ class _PushInboxScreenState extends State<PushInboxScreen> {
                           child: Container(
                             padding: const EdgeInsets.all(14),
                             decoration: BoxDecoration(
-                              color: Colors.white,
+                              color: unread ? const Color(0xFFF7F0FF) : Colors.white,
                               borderRadius: BorderRadius.circular(14),
                               border: Border.all(color: Colors.grey.shade200),
                             ),
@@ -441,7 +293,19 @@ class _PushInboxScreenState extends State<PushInboxScreen> {
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      Text(event.title, style: const TextStyle(fontWeight: FontWeight.w700, color: _black)),
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(event.title, style: const TextStyle(fontWeight: FontWeight.w700, color: _black)),
+                                          ),
+                                          if (unread)
+                                            Container(
+                                              width: 8,
+                                              height: 8,
+                                              decoration: const BoxDecoration(color: _purple, shape: BoxShape.circle),
+                                            ),
+                                        ],
+                                      ),
                                       if (event.body != null && event.body!.isNotEmpty) ...[
                                         const SizedBox(height: 4),
                                         Text(event.body!, style: TextStyle(color: Colors.grey.shade700, height: 1.35)),
@@ -470,22 +334,6 @@ class _PushInboxScreenState extends State<PushInboxScreen> {
     );
   }
 
-  Widget _diagLine(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 120,
-            child: Text(label, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-          ),
-          Expanded(
-            child: Text(value, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _black)),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 class _PushInboxEmptyBody extends StatelessWidget {
@@ -501,10 +349,10 @@ class _PushInboxEmptyBody extends StatelessWidget {
           children: [
             Icon(Icons.inbox_outlined, size: 48, color: Colors.grey.shade400),
             const SizedBox(height: 16),
-            Text('No in-app events yet', style: TextStyle(fontSize: 16, color: Colors.grey.shade700)),
+            Text('No notifications yet', style: TextStyle(fontSize: 16, color: Colors.grey.shade700)),
             const SizedBox(height: 8),
             Text(
-              'Live invites, calls, and other socket events will appear here.',
+              'Live invites, calls, and other updates will appear here.',
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.grey.shade600, height: 1.4),
             ),

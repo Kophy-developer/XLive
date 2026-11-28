@@ -34,6 +34,7 @@ bool looksLikeChatImageUrl(String? url) {
   final u = (url ?? '').toLowerCase();
   if (u.isEmpty) return false;
   if (u.contains('/image/upload/')) return true;
+  if (u.contains('image%2f')) return true;
   return RegExp(r'\.(png|jpe?g|gif|webp|heic|heif|avif|bmp)(\?|#|$)', caseSensitive: false).hasMatch(u);
 }
 
@@ -52,10 +53,20 @@ bool looksLikeChatAudioUrl(String? url) {
 
 String? resolveChatMediaKind(String? mediaType, String? mediaUrl) {
   final fromType = canonicalizeChatMediaToken(mediaType);
+  if (looksLikeChatImageUrl(mediaUrl)) {
+    if (fromType == null || fromType == 'image' || fromType == 'sticker' || fromType == 'document') {
+      return fromType == 'sticker' ? 'sticker' : 'image';
+    }
+  }
+  if (looksLikeChatVideoUrl(mediaUrl)) {
+    if (fromType == null || fromType == 'video' || fromType == 'document') return 'video';
+  }
+  if (looksLikeChatAudioUrl(mediaUrl)) {
+    if (fromType == null || fromType == 'audio' || fromType == 'voice' || fromType == 'document') {
+      return fromType == 'audio' ? 'audio' : 'voice';
+    }
+  }
   if (fromType != null) return fromType;
-  if (looksLikeChatImageUrl(mediaUrl)) return 'image';
-  if (looksLikeChatVideoUrl(mediaUrl)) return 'video';
-  if (looksLikeChatAudioUrl(mediaUrl)) return 'voice';
   if ((mediaUrl ?? '').trim().isNotEmpty) return 'document';
   return null;
 }
@@ -67,7 +78,7 @@ String? pickChatMediaTypeCandidate({
   String? mimeType,
   String? genericType,
 }) {
-  for (final candidate in [mediaType, attachmentType, fileType, mimeType, genericType]) {
+  for (final candidate in [mimeType, mediaType, attachmentType, fileType, genericType]) {
     final kind = canonicalizeChatMediaToken(candidate);
     if (kind != null) return kind;
   }

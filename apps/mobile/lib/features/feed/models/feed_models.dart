@@ -60,7 +60,24 @@ class FeedItem {
     return !accessAllowed || needsPurchase || needsUnlock;
   }
 
-  bool get isImage => mediaType?.toLowerCase() == 'image';
+  bool get isImage {
+    final mt = mediaType?.toLowerCase() ?? '';
+    if (mt.contains('video')) return false;
+    if (type == FeedContentType.clip || type == FeedContentType.stream) return false;
+    if (mt.contains('image') || mt.contains('photo')) return true;
+    final src = (thumbnailUrl ?? '').toLowerCase();
+    if (src.isEmpty) return false;
+    if (src.contains('/video/upload/') || src.contains('.m3u8') || src.contains('.mp4') || src.contains('.mov') || src.contains('.webm')) {
+      return false;
+    }
+    if (src.contains('/image/upload/')) return true;
+    return src.contains('.jpg') ||
+        src.contains('.jpeg') ||
+        src.contains('.png') ||
+        src.contains('.webp') ||
+        src.contains('.gif') ||
+        src.contains('.heic');
+  }
 
   bool get isAlbum => albumSlides.length > 1;
 
@@ -235,7 +252,7 @@ class FeedItem {
       creatorAvatarUrl: ApiJson.pickString(creator ?? const {}, ['avatarUrl', 'avatar']) ??
           ApiJson.pickString(normalized, ['creatorAvatarUrl', 'avatarUrl', 'avatar', 'hostAvatarUrl']) ??
           ApiJson.pickString(json, ['creatorAvatarUrl', 'avatarUrl', 'avatar', 'hostAvatarUrl']),
-      commentCount: ApiJson.pickMetricInt(normalized, ['commentCount', 'comments', 'totalComments']),
+      commentCount: ApiJson.pickMetricInt(normalized, ['commentCount', 'totalComments', 'commentsCount', 'comments']),
       status: status,
       createdAt: DateTime.tryParse(createdRaw ?? ''),
       accessAllowed: allowed,

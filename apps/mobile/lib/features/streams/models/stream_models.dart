@@ -292,6 +292,7 @@ class StreamInvite {
     required this.id,
     this.streamId,
     this.streamTitle,
+    this.streamStatus,
     this.hostName,
     this.inviteeId,
     this.inviteeName,
@@ -308,6 +309,7 @@ class StreamInvite {
   final String id;
   final String? streamId;
   final String? streamTitle;
+  final String? streamStatus;
   final String? hostName;
   final String? inviteeId;
   final String? inviteeName;
@@ -325,6 +327,47 @@ class StreamInvite {
   bool get isAccepted => (status ?? '').toLowerCase() == 'accepted' || (status ?? '').toLowerCase() == 'joined';
 
   bool get isCohostRole => (role ?? '').toLowerCase() == 'cohost' || (role ?? '').toLowerCase() == 'co-host';
+
+  bool get isStreamLiveOrScheduled {
+    final s = (streamStatus ?? '').toLowerCase();
+    if (s == 'ended' || s == 'completed' || s == 'cancelled' || s == 'canceled' || s == 'stopped') {
+      return false;
+    }
+    if (endsAt != null && endsAt!.isBefore(DateTime.now())) return false;
+    if (s == 'live' || s == 'started' || s == 'scheduled' || s == 'active' || s == 'broadcasting') {
+      return true;
+    }
+    return false;
+  }
+
+  bool get isStreamEnded {
+    final s = (streamStatus ?? '').toLowerCase();
+    if (s == 'ended' || s == 'completed' || s == 'cancelled' || s == 'canceled' || s == 'stopped') {
+      return true;
+    }
+    if (endsAt != null && endsAt!.isBefore(DateTime.now())) return true;
+    return false;
+  }
+
+  StreamInvite copyWith({String? streamStatus, DateTime? endsAt}) {
+    return StreamInvite(
+      id: id,
+      streamId: streamId,
+      streamTitle: streamTitle,
+      streamStatus: streamStatus ?? this.streamStatus,
+      hostName: hostName,
+      inviteeId: inviteeId,
+      inviteeName: inviteeName,
+      inviteeUsername: inviteeUsername,
+      inviteeAvatarUrl: inviteeAvatarUrl,
+      status: status,
+      role: role,
+      earningsSplitPercent: earningsSplitPercent,
+      durationMinutes: durationMinutes,
+      scheduledStartAt: scheduledStartAt,
+      endsAt: endsAt ?? this.endsAt,
+    );
+  }
 
   String get inviteeLabel => inviteeName ?? inviteeUsername ?? 'Invitee';
 
@@ -389,6 +432,8 @@ class StreamInvite {
       inviteeUsername: invitee == null ? null : ApiJson.pickString(invitee, ['username']),
       inviteeAvatarUrl: invitee == null ? null : ApiJson.pickString(invitee, ['avatarUrl', 'avatar']),
       status: ApiJson.pickString(json, ['status', 'state']),
+      streamStatus: ApiJson.pickString(json, ['streamStatus']) ??
+          (stream == null ? null : ApiJson.pickString(stream, ['status', 'state'])),
       role: ApiJson.pickString(json, ['role', 'inviteRole']),
       earningsSplitPercent: split > 0 ? split : null,
       durationMinutes: duration > 0 ? duration : null,
@@ -481,34 +526,66 @@ class StreamCohostsInfo {
 class StreamGiftRecord {
   const StreamGiftRecord({
     required this.id,
+    this.giftId,
     this.giftName,
     this.iconUrl,
     this.quantity = 1,
+    this.senderId,
     this.senderName,
     this.points = 0,
   });
 
   final String id;
+  final String? giftId;
   final String? giftName;
   final String? iconUrl;
   final int quantity;
+  final String? senderId;
   final String? senderName;
   final int points;
 
+  StreamGiftRecord copyWith({
+    String? giftName,
+    String? iconUrl,
+    String? senderName,
+    int? points,
+  }) {
+    return StreamGiftRecord(
+      id: id,
+      giftId: giftId,
+      giftName: giftName ?? this.giftName,
+      iconUrl: iconUrl ?? this.iconUrl,
+      quantity: quantity,
+      senderId: senderId,
+      senderName: senderName ?? this.senderName,
+      points: points ?? this.points,
+    );
+  }
+
   factory StreamGiftRecord.fromJson(Map<String, dynamic> json) {
     final gift = ApiJson.map(json['gift']);
-    final sender = ApiJson.map(json['sender']) ?? ApiJson.map(json['user']);
+    final sender = ApiJson.map(json['sender']) ?? ApiJson.map(json['user']) ?? ApiJson.map(json['from']);
+    final quantity = ApiJson.pickInt(json, ['quantity', 'count'], fallback: 1);
+    var points = ApiJson.pickInt(json, ['points', 'coins', 'value', 'amount', 'amountPaid', 'amountCredited', 'coinValue']);
+    if (points <= 0 && gift != null) {
+      final unit = ApiJson.pickInt(gift, ['price', 'cost', 'coinPrice', 'points', 'coins', 'value']);
+      if (unit > 0) points = unit * (quantity <= 0 ? 1 : quantity);
+    }
     return StreamGiftRecord(
       id: ApiJson.pickString(json, ['id', '_id']) ?? '',
+      giftId: ApiJson.pickString(json, ['giftId']) ??
+          (gift == null ? null : ApiJson.pickString(gift, ['id', '_id', 'giftId'])),
       giftName: gift == null
           ? ApiJson.pickString(json, ['giftName', 'name'])
           : ApiJson.pickString(gift, ['name', 'title']),
       iconUrl: gift == null ? ApiJson.pickString(json, ['iconUrl']) : ApiJson.pickString(gift, ['iconUrl', 'icon']),
-      quantity: ApiJson.pickInt(json, ['quantity', 'count'], fallback: 1),
+      quantity: quantity,
+      senderId: ApiJson.pickString(json, ['senderId']) ??
+          (sender == null ? null : ApiJson.pickString(sender, ['id', '_id', 'userId'])),
       senderName: sender == null
           ? ApiJson.pickString(json, ['senderName', 'username'])
           : ApiJson.pickString(sender, ['displayName', 'username', 'name']),
-      points: ApiJson.pickInt(json, ['points', 'cashValue', 'amount']),
+      points: points,
     );
   }
 }

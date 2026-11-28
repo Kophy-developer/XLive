@@ -4,7 +4,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
-const apiBase = 'https://store-x-live.4tqepo.easypanel.host';
+const apiBase = 'https://xlive-app-bcqre.ondigitalocean.app';
 const imagePath =
     '/Users/macpro/.cursor/projects/Users-macpro-Projects-XLive/assets/back_view-d1bf5b6b-acd3-444a-97f3-2ef07fce1e36.png';
 const videoPath = '/Users/macpro/Downloads/WhatsApp Video 2026-07-09 at 08.35.13.mp4';

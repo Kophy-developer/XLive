@@ -10,7 +10,6 @@ class SessionStore {
   static const _creatorModeKey = 'xlive_creator_mode';
   static const _captionsEnabledKey = 'xlive_live_captions_enabled';
   static const _aiTranslatorToastShownKey = 'xlive_ai_translator_toast_shown';
-  static const _loginAliasPrefix = 'xlive_login_alias_';
 
   final FlutterSecureStorage _storage;
 
@@ -19,19 +18,6 @@ class SessionStore {
   Future<String?> readUserId() => _storage.read(key: _userIdKey);
 
   Future<String?> readIdentifier() => _storage.read(key: _identifierKey);
-
-  Future<String?> readLoginAlias(String username) {
-    final key = username.trim().toLowerCase();
-    if (key.isEmpty) return Future.value(null);
-    return _storage.read(key: '$_loginAliasPrefix$key');
-  }
-
-  Future<void> writeLoginAlias(String username, String email) async {
-    final key = username.trim().toLowerCase();
-    final value = email.trim();
-    if (key.isEmpty || value.isEmpty) return;
-    await _storage.write(key: '$_loginAliasPrefix$key', value: value);
-  }
 
   Future<bool> readCreatorMode() async {
     return (await _storage.read(key: _creatorModeKey)) == '1';

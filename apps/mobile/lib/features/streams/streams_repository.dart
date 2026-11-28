@@ -2,12 +2,23 @@ import '../../core/network/api_client.dart';
 import '../../core/network/api_json.dart';
 import '../../core/session/auth_session.dart';
 import '../chats/models/chat_api_models.dart';
+import '../gifts/gifts_repository.dart';
+import '../gifts/models/gift_models.dart';
+import '../users/users_repository.dart';
 import 'models/stream_models.dart';
 
 class StreamsRepository {
-  StreamsRepository({ApiClient? client}) : _client = client ?? ApiClient();
+  StreamsRepository({
+    ApiClient? client,
+    GiftsRepository? giftsRepo,
+    UsersRepository? usersRepo,
+  })  : _client = client ?? ApiClient(),
+        _giftsRepo = giftsRepo ?? GiftsRepository(),
+        _usersRepo = usersRepo ?? UsersRepository();
 
   final ApiClient _client;
+  final GiftsRepository _giftsRepo;
+  final UsersRepository _usersRepo;
 
   Future<LiveStream> createStream({
     required String title,
@@ -148,7 +159,57 @@ class StreamsRepository {
       '/api/x-live/streams/$streamId/gifts',
       query: {'page': '$page', 'limit': '$limit'},
     );
-    return ApiJson.listItems(json).map(StreamGiftRecord.fromJson).where((g) => g.id.isNotEmpty).toList();
+    final rows = ApiJson.listItems(json).map(StreamGiftRecord.fromJson).where((g) => g.id.isNotEmpty).toList();
+    return _enrichStreamGifts(rows);
+  }
+
+  Future<List<StreamGiftRecord>> _enrichStreamGifts(List<StreamGiftRecord> rows) async {
+    if (rows.isEmpty) return rows;
+    List<GiftCatalogItem> catalog = const [];
+    try {
+      catalog = await _giftsRepo.getCatalog();
+    } catch (_) {}
+    final byGiftId = {for (final g in catalog) g.id: g};
+    final nameCache = <String, String>{};
+
+    Future<String> resolveSender(String? senderId, String? fallback) async {
+      final existing = fallback?.trim();
+      if (existing != null && existing.isNotEmpty && existing != 'Viewer') return existing;
+      final id = senderId?.trim();
+      if (id == null || id.isEmpty) return existing?.isNotEmpty == true ? existing! : 'Viewer';
+      final cached = nameCache[id];
+      if (cached != null) return cached;
+      try {
+        final user = await _usersRepo.getUser(id);
+        final name = user.effectiveDisplayName.trim();
+        if (name.isNotEmpty && name != 'User') {
+          nameCache[id] = name;
+          return name;
+        }
+      } catch (_) {}
+      nameCache[id] = existing?.isNotEmpty == true ? existing! : 'Viewer';
+      return nameCache[id]!;
+    }
+
+    final out = <StreamGiftRecord>[];
+    for (final row in rows) {
+      final catalogGift = row.giftId == null ? null : byGiftId[row.giftId];
+      final giftName = (catalogGift?.name.trim().isNotEmpty == true)
+          ? catalogGift!.name
+          : (row.giftName?.trim().isNotEmpty == true ? row.giftName : 'Gift');
+      final senderName = await resolveSender(row.senderId, row.senderName);
+      final qty = row.quantity <= 0 ? 1 : row.quantity;
+      final catalogCoins = (catalogGift?.price ?? 0) * qty;
+      out.add(
+        row.copyWith(
+          giftName: giftName,
+          iconUrl: catalogGift?.iconUrl ?? row.iconUrl,
+          senderName: senderName,
+          points: row.points > 0 ? row.points : catalogCoins,
+        ),
+      );
+    }
+    return out;
   }
 
   Future<List<StreamInviteCandidate>> inviteCandidates(

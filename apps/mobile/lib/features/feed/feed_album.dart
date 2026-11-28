@@ -18,9 +18,8 @@ String wrapFeedAlbumCaption(String? caption, String albumId) {
 
 String? feedAlbumIdFromTitle(String? title) {
   final raw = title ?? '';
-  final start = raw.indexOf(_albumPrefix);
-  if (start < 0) return null;
-  final idStart = start + _albumPrefix.length;
+  if (!raw.startsWith(_albumPrefix)) return null;
+  final idStart = _albumPrefix.length;
   final end = raw.indexOf(_albumSuffix, idStart);
   if (end <= idStart) return null;
   final id = raw.substring(idStart, end);
@@ -43,16 +42,24 @@ bool _isAlbumMediaCandidate(FeedItem item) {
   return item.type == FeedContentType.video || item.type == FeedContentType.clip;
 }
 
+List<String> feedSaveTargetIds(FeedItem item) {
+  final slides = item.albumSlides.length > 1 ? item.albumSlides : [item];
+  final seen = <String>{};
+  final ids = <String>[];
+  for (final slide in slides) {
+    final id = slide.id.trim();
+    if (id.isEmpty || !seen.add(id)) continue;
+    ids.add(id);
+  }
+  return ids;
+}
+
 List<FeedItem> _uniqueFeedItems(List<FeedItem> items) {
   final seenIds = <String>{};
-  final seenThumbs = <String>{};
   final out = <FeedItem>[];
   for (final item in items) {
     if (item.id.isEmpty || seenIds.contains(item.id)) continue;
-    final thumb = item.thumbnailUrl?.trim() ?? '';
-    if (thumb.isNotEmpty && seenThumbs.contains(thumb)) continue;
     seenIds.add(item.id);
-    if (thumb.isNotEmpty) seenThumbs.add(thumb);
     out.add(item);
   }
   return out;
@@ -75,6 +82,10 @@ List<FeedItem> coalesceFeedAlbums(List<FeedItem> items) {
       if (emitted.contains(albumId)) continue;
       emitted.add(albumId);
       final slides = groups[albumId]!;
+      if (slides.length == 1) {
+        out.add(slides.first);
+        continue;
+      }
       out.add(slides.first.copyWithAlbumSlides(slides));
       continue;
     }

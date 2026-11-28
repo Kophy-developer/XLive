@@ -1,6 +1,7 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
+import '../../core/utils/safe_text.dart';
 import 'chat_theme.dart';
 
 export '../../core/network/chat_message_limits.dart';
@@ -31,7 +32,7 @@ class _ExpandableChatTextState extends State<ExpandableChatText> {
   @override
   Widget build(BuildContext context) {
     final text = widget.text;
-    final needsFold = text.length > widget.threshold;
+    final needsFold = text.runes.length > widget.threshold;
     if (!needsFold || _expanded) {
       if (!needsFold) {
         return Text(text, style: widget.style);
@@ -53,7 +54,7 @@ class _ExpandableChatTextState extends State<ExpandableChatText> {
       );
     }
 
-    final clipped = text.substring(0, widget.threshold).trimRight();
+    final clipped = truncateSafely(text, widget.threshold, ellipsis: '').trimRight();
     final linkColor = widget.linkColor ?? ChatTheme.purpleDeep;
     return Text.rich(
       TextSpan(

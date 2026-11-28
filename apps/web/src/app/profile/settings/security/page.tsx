@@ -4,7 +4,8 @@ import { useState } from "react";
 import { AuthGuard, PageHeader } from "@/components/auth-guard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { changeUserPassword, setUserPasscode, removeUserPasscode } from "@/lib/api/creator";
+import { setUserPasscode, removeUserPasscode } from "@/lib/api/creator";
+import { changePassword, passwordRuleError, serverPasswordError } from "@/lib/api/auth";
 import { Lock, KeyRound } from "lucide-react";
 
 export default function SecuritySettingsPage() {
@@ -13,6 +14,8 @@ export default function SecuritySettingsPage() {
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordError, setPasswordError] = useState("");
   const [passwordSuccess, setPasswordSuccess] = useState(false);
+  const [serverNewPwError, setServerNewPwError] = useState("");
+  const newPwError = serverNewPwError || (newPassword ? passwordRuleError(newPassword) : null);
 
   const [passcode, setPasscode] = useState("");
   const [passcodeLoading, setPasscodeLoading] = useState(false);
@@ -21,24 +24,24 @@ export default function SecuritySettingsPage() {
 
   async function handlePasswordUpdate(e: React.FormEvent) {
     e.preventDefault();
-    if (!newPassword.trim()) {
-      setPasswordError("Please enter a new password");
+    if (!currentPassword) {
+      setPasswordError("Please enter your current password");
       return;
     }
+    if (newPwError) return;
     setPasswordLoading(true);
     setPasswordError("");
     setPasswordSuccess(false);
 
     try {
-      await changeUserPassword({
-        currentPassword: currentPassword.trim() || undefined,
-        newPassword: newPassword.trim(),
-      });
+      await changePassword({ currentPassword, newPassword });
       setPasswordSuccess(true);
       setCurrentPassword("");
       setNewPassword("");
     } catch (err) {
-      setPasswordError((err as Error).message || "Failed to update password");
+      const pwServer = serverPasswordError(err);
+      if (pwServer) setServerNewPwError(pwServer);
+      else setPasswordError((err as Error).message || "Failed to update password");
     } finally {
       setPasswordLoading(false);
     }
@@ -110,6 +113,7 @@ export default function SecuritySettingsPage() {
               placeholder="••••••••"
               value={currentPassword}
               onChange={(e) => setCurrentPassword(e.target.value)}
+              required
             />
           </div>
 
@@ -121,9 +125,14 @@ export default function SecuritySettingsPage() {
               type="password"
               placeholder="••••••••"
               value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
+              onChange={(e) => {
+                setNewPassword(e.target.value);
+                setServerNewPwError("");
+              }}
               required
+              aria-invalid={Boolean(newPwError)}
             />
+            {newPwError ? <p className="text-xs font-semibold text-red-400">{newPwError}</p> : null}
           </div>
 
           {passwordError ? (

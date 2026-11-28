@@ -4,7 +4,9 @@ import '../../core/media/media_url.dart';
 import '../../core/media/saved_media_store.dart';
 import '../../core/network/api_friendly_messages.dart';
 import '../../core/session/auth_session.dart';
-import '../../features/social/social_repository.dart';
+import '../../features/feed/feed_album.dart';
+import '../../features/feed/models/feed_models.dart';
+import '../../features/social/models/social_models.dart';
 import '../feed/feed_reel_viewer_screen.dart';
 import '../feed/video_preview_comment_screens.dart';
 
@@ -16,7 +18,6 @@ class SavedMediaScreen extends StatefulWidget {
 }
 
 class _SavedMediaScreenState extends State<SavedMediaScreen> {
-  final _social = SocialRepository();
   bool _loading = true;
   String? _error;
   List<VideoClipPreviewArgs> _items = const [];
@@ -36,43 +37,19 @@ class _SavedMediaScreenState extends State<SavedMediaScreen> {
       });
       return;
     }
+
     setState(() {
       _loading = true;
       _error = null;
     });
+
     try {
-      await SavedMediaStore.instance.ensureLoaded(force: true);
-      final refs = SavedMediaStore.instance.items;
-      final loaded = <VideoClipPreviewArgs>[];
-      for (final ref in refs) {
-        try {
-          final detail = await _social.getMediaDetail(targetType: ref.targetType, targetId: ref.targetId);
-          if (detail.isLocked) continue;
-          loaded.add(
-            VideoClipPreviewArgs(
-              targetType: ref.targetType,
-              targetId: ref.targetId,
-              title: detail.title,
-              thumbnailUrl: detail.thumbnailUrl,
-              mediaUrl: detail.streamUrl,
-              creatorId: detail.creatorId,
-              creatorName: detail.creatorName,
-              unlockPrice: detail.unlockPrice,
-              locked: false,
-              isImage: detail.streamUrl != null &&
-                  (detail.streamUrl!.toLowerCase().contains('.jpg') ||
-                      detail.streamUrl!.toLowerCase().contains('.png') ||
-                      detail.streamUrl!.toLowerCase().contains('.webp') ||
-                      detail.streamUrl!.toLowerCase().contains('/image')),
-              commentCount: detail.commentCount,
-              likeCount: detail.likeCount,
-            ),
-          );
-        } catch (_) {}
-      }
+      final details = await SavedMediaStore.instance.fetchSavedDetails(page: 1, limit: 100);
+      final visible = details.where((d) => d.id.isNotEmpty && !d.isLocked).toList();
+      final coalesced = coalesceFeedAlbums([for (final d in visible) _toFeedItem(d)]);
       if (!mounted) return;
       setState(() {
-        _items = loaded;
+        _items = [for (final item in coalesced) VideoClipPreviewArgs.fromFeedItem(item)];
         _loading = false;
       });
     } catch (e) {
@@ -82,6 +59,27 @@ class _SavedMediaScreenState extends State<SavedMediaScreen> {
         _error = friendlyApiMessage(e);
       });
     }
+  }
+
+  FeedItem _toFeedItem(MediaDetail detail) {
+    return FeedItem(
+      id: detail.id,
+      type: detail.type,
+      title: detail.title,
+      thumbnailUrl: detail.thumbnailUrl,
+      mediaType: detail.mediaType,
+      viewCount: detail.viewCount,
+      likeCount: detail.likeCount,
+      commentCount: detail.commentCount,
+      creatorId: detail.creatorId,
+      creatorName: detail.creatorName,
+      createdAt: detail.createdAt,
+      accessAllowed: detail.accessAllowed,
+      needsPurchase: detail.needsPurchase,
+      needsUnlock: detail.needsUnlock,
+      unlockPrice: detail.unlockPrice,
+      saveCount: detail.saveCount,
+    );
   }
 
   void _open(int index) {
@@ -136,16 +134,30 @@ class _SavedMediaScreenState extends State<SavedMediaScreen> {
                           final thumb = resolveMediaUrl(item.thumbnailUrl, resourceType: 'image');
                           return GestureDetector(
                             onTap: () => _open(index),
-                            child: ColoredBox(
-                              color: const Color(0xFF1C1C1E),
-                              child: thumb.isEmpty
-                                  ? const Center(child: Icon(Icons.movie_outlined, color: Colors.white38))
-                                  : Image.network(
-                                      thumb,
-                                      fit: BoxFit.cover,
-                                      errorBuilder: (_, _, _) =>
-                                          const Center(child: Icon(Icons.broken_image_outlined, color: Colors.white38)),
-                                    ),
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                ColoredBox(
+                                  color: const Color(0xFF1C1C1E),
+                                  child: thumb.isEmpty
+                                      ? const Center(
+                                          child: Icon(Icons.bookmark_outline_rounded, color: Colors.white38),
+                                        )
+                                      : Image.network(
+                                          thumb,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (_, _, _) => const Center(
+                                            child: Icon(Icons.broken_image_outlined, color: Colors.white38),
+                                          ),
+                                        ),
+                                ),
+                                if (item.isAlbum)
+                                  const Positioned(
+                                    top: 6,
+                                    right: 6,
+                                    child: Icon(Icons.collections_rounded, color: Colors.white, size: 16),
+                                  ),
+                              ],
                             ),
                           );
                         },

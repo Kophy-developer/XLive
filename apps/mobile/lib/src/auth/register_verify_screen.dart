@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../../core/network/api_exception.dart';
 import '../../core/session/auth_session.dart';
 import '../../features/auth/models/auth_models.dart';
 import '../profile/profile_screens.dart';
@@ -74,14 +73,13 @@ class _RegisterVerifyScreenState extends State<RegisterVerifyScreen> {
       _restartTimer();
       return;
     }
-    final userId = widget.draft.userId;
-    if (userId == null || userId.isEmpty) return;
+    final email = widget.draft.email?.trim();
+    if (email == null || email.isEmpty) return;
     try {
-      await AuthSession.instance.authRepository.requestVerificationCode(
-        userId: userId,
-        type: widget.verificationType,
-      );
+      await AuthSession.instance.authRepository.resendVerification(email);
       _restartTimer();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('A new code was sent to $email.')));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(authErrorMessage(e))));
@@ -90,13 +88,13 @@ class _RegisterVerifyScreenState extends State<RegisterVerifyScreen> {
 
   Future<void> _submit() async {
     final code = _codeCtrl.text.replaceAll(RegExp(r'\D'), '');
-    if (code.length < 4) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter the verification code.')));
+    if (code.length != 6) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter the 6-digit code from your email.')));
       return;
     }
-    final userId = widget.draft.userId;
-    if (userId == null || userId.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Missing user id for verification.')));
+    final email = widget.draft.email?.trim();
+    if (widget.onVerified == null && (email == null || email.isEmpty)) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Missing email for verification.')));
       return;
     }
 
@@ -106,32 +104,17 @@ class _RegisterVerifyScreenState extends State<RegisterVerifyScreen> {
         await widget.onVerified!(code);
         return;
       }
-      await AuthSession.instance.authRepository.verifyCode(
-        userId: userId,
-        code: code,
-        type: widget.verificationType,
-      );
       final draft = widget.draft;
-      final email = draft.email;
-      final password = draft.password;
-      final username = draft.username;
-      if (password == null || email == null || email.isEmpty || username == null || username.isEmpty) {
-        throw ApiException('Registration data incomplete');
-      }
       final displayName = [draft.firstName, draft.lastName].where((s) => s != null && s.trim().isNotEmpty).join(' ').trim();
-      await AuthSession.instance.signInAfterRegistration(
-        email: email,
-        password: password,
-        username: username,
+      await AuthSession.instance.verifyEmailAndSignIn(
+        email: email!,
+        code: code,
         displayName: displayName.isEmpty ? null : displayName,
       );
       if (!mounted) return;
       Navigator.pushNamedAndRemoveUntil(context, '/home', (r) => false);
       if (!mounted) return;
       await Navigator.push<bool>(context, MaterialPageRoute<bool>(builder: (_) => const EditProfileScreen()));
-    } on BridgeUserNotFoundException catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(authErrorMessage(e))));

@@ -479,6 +479,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
   final _newCtrl = TextEditingController();
   bool _hideOld = true;
   bool _hideNew = true;
+  String? _serverNewPasswordError;
 
   @override
   void dispose() {
@@ -487,7 +488,9 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
     super.dispose();
   }
 
-  bool get _lenOk => _newCtrl.text.length >= 8 && _newCtrl.text.length <= 128;
+  bool get _lenOk => validateAuthPassword(_newCtrl.text) == null;
+  String? get _newPasswordError =>
+      _serverNewPasswordError ?? (_newCtrl.text.isEmpty ? null : validateAuthPassword(_newCtrl.text));
   bool get _canSubmit => _oldCtrl.text.isNotEmpty && validateAuthPassword(_newCtrl.text) == null;
 
   InputDecoration _fieldDeco(String label, {required bool obscure, required VoidCallback toggle}) {
@@ -567,11 +570,12 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
                   TextField(
                     controller: _newCtrl,
                     obscureText: _hideNew,
-                    onChanged: (_) => setState(() {}),
-                    decoration: _fieldDeco('New Password', obscure: _hideNew, toggle: () => setState(() => _hideNew = !_hideNew)),
+                    onChanged: (_) => setState(() => _serverNewPasswordError = null),
+                    decoration: _fieldDeco('New Password', obscure: _hideNew, toggle: () => setState(() => _hideNew = !_hideNew))
+                        .copyWith(errorText: _newPasswordError),
                   ),
                   const SizedBox(height: 24),
-                  _reqRow('Must be at least 8 characters', _lenOk),
+                  _reqRow('Must be at least $authPasswordMinLength characters', _lenOk),
                 ],
               ),
             ),
@@ -585,14 +589,22 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
                 onPressed: _canSubmit
                     ? () async {
                         try {
-                          await AuthSession.instance.changePassword(_newCtrl.text);
+                          await AuthSession.instance.changePassword(
+                            currentPassword: _oldCtrl.text,
+                            newPassword: _newCtrl.text,
+                          );
                           if (!context.mounted) return;
                           final messenger = ScaffoldMessenger.maybeOf(context);
                           Navigator.pop(context);
                           messenger?.showSnackBar(const SnackBar(content: Text('Password updated')));
                         } catch (e) {
                           if (!context.mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(authErrorMessage(e))));
+                          final passwordError = serverPasswordError(e);
+                          if (passwordError != null) {
+                            setState(() => _serverNewPasswordError = passwordError);
+                          } else {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(authErrorMessage(e))));
+                          }
                         }
                       }
                     : null,

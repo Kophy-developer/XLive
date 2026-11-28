@@ -50,30 +50,17 @@ class RegisterDraft {
   }
 }
 
-class AuthLoginResult {
-  const AuthLoginResult({
-    required this.userId,
-    required this.identifier,
-    required this.needsVerification,
-    required this.emailVerified,
-    required this.phoneVerified,
-  });
-
-  final String userId;
-  final String identifier;
-  final bool needsVerification;
-  final bool emailVerified;
-  final bool phoneVerified;
-}
-
-class BridgeTokenResult {
-  const BridgeTokenResult({
+/// Result of an auth call that issues a JWT (`/auth/verify-email`, `/auth/login`).
+class AuthTokenResult {
+  const AuthTokenResult({
     required this.token,
     required this.userId,
-    this.user,
+    required this.identifier,
+    required this.user,
   });
 
   final String token;
   final String userId;
-  final XLiveUser? user;
+  final String identifier;
+  final XLiveUser user;
 }

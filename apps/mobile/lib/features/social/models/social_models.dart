@@ -41,10 +41,10 @@ class UserPublicProfile {
       displayName: ApiJson.pickString(data, ['displayName', 'name']),
       bio: ApiJson.pickString(data, ['bio', 'about']),
       avatarUrl: ApiJson.pickString(data, ['avatarUrl', 'avatar', 'profileImage']),
-      followersCount: ApiJson.pickInt(stats, ['followersCount', 'followers', 'followerCount']),
-      followingCount: ApiJson.pickInt(stats, ['followingCount', 'following']),
-      clipsCount: ApiJson.pickInt(stats, ['clipsCount', 'clips', 'clipCount']),
-      earnedPoints: ApiJson.pickInt(stats, ['earnedPoints', 'points', 'earned', 'totalEarned']),
+      followersCount: ApiJson.pickMetricInt(stats, ['followersCount', 'followerCount', 'followers', 'totalFollowers']),
+      followingCount: ApiJson.pickMetricInt(stats, ['followingCount', 'following', 'totalFollowing']),
+      clipsCount: ApiJson.pickMetricInt(stats, ['clipsCount', 'clipCount', 'clips']),
+      earnedPoints: ApiJson.pickMetricInt(stats, ['earnedPoints', 'points', 'earned', 'totalEarned']),
       isLive: ApiJson.boolValue(data['isLive']) || ApiJson.boolValue(data['liveNow']),
       isFollowing: ApiJson.boolValue(data['isFollowing']) || ApiJson.boolValue(data['following']),
     );
@@ -221,6 +221,7 @@ class MediaDetail {
     required this.title,
     this.thumbnailUrl,
     this.streamUrl,
+    this.mediaType,
     this.viewCount = 0,
     this.likeCount = 0,
     this.commentCount = 0,
@@ -235,6 +236,7 @@ class MediaDetail {
     this.needsPurchase = false,
     this.needsUnlock = false,
     this.saveCount = 0,
+    this.savedByMe = false,
   });
 
   final String id;
@@ -242,6 +244,7 @@ class MediaDetail {
   final String title;
   final String? thumbnailUrl;
   final String? streamUrl;
+  final String? mediaType;
   final int viewCount;
   final int likeCount;
   final int commentCount;
@@ -256,8 +259,21 @@ class MediaDetail {
   final bool needsPurchase;
   final bool needsUnlock;
   final int saveCount;
+  final bool savedByMe;
 
   bool get isLocked => !accessAllowed || needsPurchase || needsUnlock;
+
+  bool get isImage {
+    final mt = mediaType?.toLowerCase() ?? '';
+    if (mt.contains('video')) return false;
+    if (mt.contains('image') || mt.contains('photo')) return true;
+    final src = '${thumbnailUrl ?? ''} ${streamUrl ?? ''}'.toLowerCase();
+    if (src.contains('/video/upload/') || src.contains('.m3u8') || src.contains('.mp4') || src.contains('.mov')) {
+      return false;
+    }
+    if (src.contains('/image/upload/')) return true;
+    return RegExp(r'\.(jpe?g|png|webp|gif|heic)(\?|$)').hasMatch(src);
+  }
 
   String get targetType => switch (type) {
         FeedContentType.clip => 'clip',
@@ -272,14 +288,22 @@ class MediaDetail {
     final allowed = access == null ? true : ApiJson.boolValue(access['allowed'], fallback: true);
     final needsPurchase = access != null && ApiJson.boolValue(access['needsPurchase']);
     final needsUnlock = access != null && ApiJson.boolValue(access['needsUnlock']);
+    final titleRaw = ApiJson.pickString(data, ['title', 'name']);
+    final captionRaw = ApiJson.pickString(data, ['caption', 'description']);
+    final title = () {
+      if (titleRaw != null && titleRaw.contains('xlive_album:')) return titleRaw;
+      if (captionRaw != null && captionRaw.contains('xlive_album:')) return captionRaw;
+      return titleRaw ?? captionRaw ?? 'Untitled';
+    }();
     return MediaDetail(
       id: ApiJson.pickString(data, ['id', '_id']) ?? '',
       type: type,
-      title: ApiJson.pickString(data, ['title', 'caption', 'name']) ?? 'Untitled',
+      title: title,
       thumbnailUrl: ApiJson.pickString(data, ['thumbnailUrl', 'thumbnail', 'coverUrl', 'previewUrl']),
       streamUrl: allowed
           ? ApiJson.pickString(data, ['url', 'mediaUrl', 'videoUrl', 'streamUrl', 'playbackUrl', 'fileUrl'])
           : null,
+      mediaType: ApiJson.pickString(data, ['mediaType', 'mimeType', 'contentType']),
       viewCount: ApiJson.pickMetricInt(data, ['viewCount', 'views', 'viewerCount']),
       likeCount: ApiJson.pickMetricInt(data, ['likeCount', 'likes']),
       commentCount: ApiJson.pickMetricInt(data, ['commentCount', 'comments']),
@@ -296,6 +320,7 @@ class MediaDetail {
       needsPurchase: needsPurchase,
       needsUnlock: needsUnlock || needsPurchase || !allowed,
       saveCount: ApiJson.pickMetricInt(data, ['saveCount', 'savesCount', 'bookmarkCount']),
+      savedByMe: ApiJson.boolValue(data['savedByMe']) || ApiJson.boolValue(data['isSaved']),
     );
   }
 }

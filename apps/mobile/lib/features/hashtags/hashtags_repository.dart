@@ -1,5 +1,6 @@
 import '../../core/network/api_client.dart';
 import '../../core/network/api_json.dart';
+import '../feed/feed_repository.dart';
 import '../feed/models/feed_models.dart';
 
 class HashtagItem {
@@ -42,6 +43,7 @@ class HashtagsRepository {
       query: {'page': '$page', 'limit': '$limit'},
       auth: false,
     );
-    return ApiJson.listItems(json).map(FeedItem.fromJson).where((i) => i.id.isNotEmpty).toList();
+    final items = ApiJson.listItems(json).map(FeedItem.fromJson).where((i) => i.id.isNotEmpty).toList();
+    return FeedRepository(client: _client).enrichFeedItems(items);
   }
 }

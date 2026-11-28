@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 Future<void> main(List<String> args) async {
-  final api = Platform.environment['XLIVE_API'] ?? 'https://store-x-live.4tqepo.easypanel.host';
+  final api = Platform.environment['XLIVE_API'] ?? 'https://xlive-app-bcqre.ondigitalocean.app';
   final username = args.isNotEmpty ? args.first : 'bruiz_flash';
   stdout.writeln('Probing API errors against $api as $username\n');
 

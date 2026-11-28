@@ -218,8 +218,13 @@ String friendlyApiMessage(
   if (isRetryableNetworkError(e)) {
     return connectionErrorMessage;
   }
-  final raw = e.toString().trim();
-  if (raw.isNotEmpty && !_looksLikeRawHttpError(raw) && !raw.startsWith('Exception:')) {
+  var raw = e.toString().trim();
+  if (raw.startsWith('Exception:')) {
+    raw = raw.substring('Exception:'.length).trim();
+  } else if (raw.startsWith('Bad state:')) {
+    raw = raw.substring('Bad state:'.length).trim();
+  }
+  if (raw.isNotEmpty && !_looksLikeRawHttpError(raw)) {
     return raw;
   }
   return fallback ?? 'Something went wrong. Please try again.';
