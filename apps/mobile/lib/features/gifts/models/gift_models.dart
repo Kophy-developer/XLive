@@ -35,11 +35,13 @@ class GiftCatalogItem {
 class ReceivedGift {
   const ReceivedGift({
     required this.id,
+    this.giftId,
     required this.name,
     this.iconUrl,
     this.quantity = 1,
     this.value = 0,
     this.cashValue = 0,
+    this.senderId,
     this.senderName,
     this.senderAvatarUrl,
     this.context,
@@ -47,30 +49,64 @@ class ReceivedGift {
   });
 
   final String id;
+  final String? giftId;
   final String name;
   final String? iconUrl;
   final int quantity;
   final int value;
   final double cashValue;
+  final String? senderId;
   final String? senderName;
   final String? senderAvatarUrl;
   final String? context;
   final DateTime? createdAt;
 
+  ReceivedGift copyWith({
+    String? name,
+    String? iconUrl,
+    String? senderName,
+    String? senderAvatarUrl,
+  }) {
+    return ReceivedGift(
+      id: id,
+      giftId: giftId,
+      name: name ?? this.name,
+      iconUrl: iconUrl ?? this.iconUrl,
+      quantity: quantity,
+      value: value,
+      cashValue: cashValue,
+      senderId: senderId,
+      senderName: senderName ?? this.senderName,
+      senderAvatarUrl: senderAvatarUrl ?? this.senderAvatarUrl,
+      context: context,
+      createdAt: createdAt,
+    );
+  }
+
   factory ReceivedGift.fromJson(Map<String, dynamic> json, {bool sent = false}) {
-    final gift = ApiJson.map(json['gift']) ?? json;
+    final gift = ApiJson.map(json['gift']);
     final sender = sent
-        ? (ApiJson.map(json['recipient']) ?? ApiJson.map(json['to']) ?? ApiJson.map(json['receiver']) ?? json)
-        : (ApiJson.map(json['sender']) ?? ApiJson.map(json['from']) ?? json);
+        ? (ApiJson.map(json['recipient']) ?? ApiJson.map(json['to']) ?? ApiJson.map(json['receiver']))
+        : (ApiJson.map(json['sender']) ?? ApiJson.map(json['from']));
     return ReceivedGift(
       id: ApiJson.pickString(json, ['id', '_id', 'transactionId']) ?? '',
-      name: ApiJson.pickString(gift, ['name', 'giftName', 'title']) ?? 'Gift',
-      iconUrl: ApiJson.pickString(gift, ['iconUrl', 'icon', 'imageUrl']),
+      giftId: ApiJson.pickString(json, ['giftId']) ??
+          (gift == null ? null : ApiJson.pickString(gift, ['id', '_id', 'giftId'])),
+      name: gift == null
+          ? (ApiJson.pickString(json, ['giftName', 'name', 'title']) ?? 'Gift')
+          : (ApiJson.pickString(gift, ['name', 'giftName', 'title']) ?? 'Gift'),
+      iconUrl: gift == null
+          ? ApiJson.pickString(json, ['iconUrl', 'icon', 'imageUrl'])
+          : ApiJson.pickString(gift, ['iconUrl', 'icon', 'imageUrl']),
       quantity: ApiJson.pickInt(json, ['quantity', 'count'], fallback: 1),
-      value: ApiJson.pickInt(json, ['value', 'points', 'coins', 'amount', 'cashValue']),
+      value: ApiJson.pickInt(json, ['value', 'points', 'coins', 'amount', 'amountPaid', 'amountCredited', 'cashValue']),
       cashValue: _toDouble(json, ['cashValue', 'usdValue', 'cash', 'payout', 'value']),
-      senderName: ApiJson.pickString(sender, ['name', 'displayName', 'username', 'senderName', 'recipientName']),
-      senderAvatarUrl: ApiJson.pickString(sender, ['avatarUrl', 'avatar']),
+      senderId: ApiJson.pickString(json, sent ? ['recipientId', 'toUserId', 'receiverId'] : ['senderId', 'fromUserId']) ??
+          (sender == null ? null : ApiJson.pickString(sender, ['id', '_id', 'userId'])),
+      senderName: sender == null
+          ? ApiJson.pickString(json, ['senderName', 'recipientName', 'username'])
+          : ApiJson.pickString(sender, ['name', 'displayName', 'username', 'senderName', 'recipientName']),
+      senderAvatarUrl: sender == null ? null : ApiJson.pickString(sender, ['avatarUrl', 'avatar']),
       context: ApiJson.pickString(json, ['streamTitle', 'context', 'source']),
       createdAt: DateTime.tryParse(ApiJson.pickString(json, ['createdAt', 'timestamp', 'date']) ?? ''),
     );

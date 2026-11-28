@@ -46,11 +46,23 @@ import {
   parseAgoraCaptionPayload,
   startHostSpeechCaptions,
   normalizeCaptionPayload,
+  type CaptionChunk,
 } from "@/lib/live-captions";
+import { normalizeLiveLang } from "@/lib/live-languages";
+import { LIVE_SEGMENT_MIN } from "@/lib/live-segments";
+import {
+  setRemoteAudioDucked,
+  speakLiveTranslation,
+  stopLiveSpeech,
+  translateLiveText,
+  unlockLiveSpeech,
+} from "@/lib/live-translate";
+import { resolveGiftSocketEvent } from "@/lib/gifts";
 import {
   AudioLines,
   FlipHorizontal2,
   Gift,
+  Headphones,
   Languages,
   Mic,
   MicOff,
@@ -64,6 +76,11 @@ import {
   VideoOff,
   X,
 } from "lucide-react";
+
+type GiftToast = {
+  id: string;
+  text: string;
+};
 
 function formatElapsed(totalSec: number) {
   const s = Math.max(0, Math.floor(totalSec));
@@ -295,6 +312,19 @@ function LiveStreamContent() {
   const [shareHint, setShareHint] = useState("");
   const [elapsedSec, setElapsedSec] = useState(0);
   const [captionsOn, setCaptionsOn] = useState(true);
+  const [hearTranslate, setHearTranslate] = useState(true);
+  const hearTranslateRef = useRef(true);
+  const translatorLiveRef = useRef(false);
+  const remoteUsersRef = useRef<IAgoraRTCRemoteUser[]>([]);
+  const lastSpokenSegmentRef = useRef("");
+  const lastGoodCaptionRef = useRef("");
+  const interimTextRef = useRef("");
+  const interimTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const translateQueueRef = useRef<Array<{ text: string; speak: boolean }>>([]);
+  const translatePumpRef = useRef(false);
+  const targetLangRef = useRef("en");
+  const [giftToasts, setGiftToasts] = useState<GiftToast[]>([]);
+  const giftToastSeqRef = useRef(0);
 
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
@@ -348,7 +378,7 @@ function LiveStreamContent() {
     captionClearRef.current = setTimeout(() => {
       setCaptionText("");
       captionClearRef.current = null;
-    }, 10000);
+    }, 20000);
   }, [captionsOn]);
 
   const { data: stream } = useQuery({
@@ -373,6 +403,94 @@ function LiveStreamContent() {
   const agoraRole: "host" | "audience" = isBroadcaster ? "host" : "audience";
   const showGift = Boolean(user && !isHost && giftCatalog.length);
 
+  const pumpTranslateQueue = useCallback(async () => {
+    if (translatePumpRef.current) return;
+    translatePumpRef.current = true;
+    try {
+      while (translateQueueRef.current.length) {
+        const job = translateQueueRef.current.shift();
+        if (!job) break;
+        const text = job.text.trim();
+        if (text.length < LIVE_SEGMENT_MIN) continue;
+        const translated = await translateLiveText({
+          text,
+          source: null,
+          target: targetLangRef.current,
+        });
+        if (!translated.translated) continue;
+        const line = translated.text.trim();
+        if (!line) continue;
+        lastGoodCaptionRef.current = line;
+        showCaption(line);
+        if (job.speak && hearTranslateRef.current) {
+          const spokenKey = line
+            .toLowerCase()
+            .replace(/[.!?。！？,"'”“’‘]+/g, "")
+            .replace(/\s+/g, " ")
+            .trim();
+          if (lastSpokenSegmentRef.current === spokenKey) continue;
+          lastSpokenSegmentRef.current = spokenKey;
+          void speakLiveTranslation(line, targetLangRef.current);
+        }
+      }
+    } finally {
+      translatePumpRef.current = false;
+      if (translateQueueRef.current.length) void pumpTranslateQueue();
+    }
+  }, [showCaption]);
+
+  const enqueueViewerTranslate = useCallback(
+    (text: string, speak: boolean) => {
+      const cleaned = text.replace(/\s+/g, " ").trim();
+      if (cleaned.length < LIVE_SEGMENT_MIN) return;
+      if (speak) {
+        translateQueueRef.current.push({ text: cleaned, speak: true });
+      } else {
+        const last = translateQueueRef.current[translateQueueRef.current.length - 1];
+        if (last && !last.speak) {
+          last.text = cleaned;
+        } else {
+          translateQueueRef.current.push({ text: cleaned, speak: false });
+        }
+      }
+      void pumpTranslateQueue();
+    },
+    [pumpTranslateQueue]
+  );
+
+  const handleViewerTranscript = useCallback(
+    (chunk: CaptionChunk) => {
+      const shown = captionTextForRole(chunk, isHost);
+      if (!shown) return;
+
+      if (isHost) {
+        showCaption(shown);
+        return;
+      }
+
+      targetLangRef.current = normalizeLiveLang(user?.language) || "en";
+      const isFinal = chunk.isFinal !== false;
+      const segment = shown.replace(/\s+/g, " ").trim();
+
+      if (!isFinal) {
+        interimTextRef.current = segment;
+        if (interimTimerRef.current) clearTimeout(interimTimerRef.current);
+        interimTimerRef.current = setTimeout(() => {
+          interimTimerRef.current = null;
+          enqueueViewerTranslate(interimTextRef.current, false);
+        }, 400);
+        return;
+      }
+
+      if (interimTimerRef.current) {
+        clearTimeout(interimTimerRef.current);
+        interimTimerRef.current = null;
+      }
+      enqueueViewerTranslate(segment, true);
+    },
+    [enqueueViewerTranslate, isHost, showCaption, user?.language]
+  );
+
   useEffect(() => {
     talkBackActiveRef.current = talkBackActive;
   }, [talkBackActive]);
@@ -380,6 +498,39 @@ function LiveStreamContent() {
   useEffect(() => {
     billingEnabledRef.current = billingEnabled;
   }, [billingEnabled]);
+
+  const translatorLive = Boolean(stream?.captionsEnabled || stream?.saveEnabled);
+
+  useEffect(() => {
+    translatorLiveRef.current = translatorLive;
+    if (!translatorLive) stopLiveSpeech();
+  }, [translatorLive]);
+
+  useEffect(() => {
+    hearTranslateRef.current = hearTranslate;
+    if (!hearTranslate) stopLiveSpeech();
+    if (!isHost) {
+      setRemoteAudioDucked(remoteUsersRef.current, translatorLive && hearTranslate);
+    }
+  }, [hearTranslate, isHost, translatorLive]);
+
+  useEffect(() => {
+    if (isHost || !translatorLive || !hearTranslate) return;
+    const onPointer = () => unlockLiveSpeech();
+    window.addEventListener("pointerdown", onPointer, { once: true });
+    return () => window.removeEventListener("pointerdown", onPointer);
+  }, [isHost, translatorLive, hearTranslate]);
+
+  useEffect(() => {
+    remoteUsersRef.current = remoteUsers;
+    if (!isHost) {
+      setRemoteAudioDucked(remoteUsers, translatorLiveRef.current && hearTranslateRef.current);
+    }
+  }, [remoteUsers, isHost]);
+
+  useEffect(() => {
+    return () => stopLiveSpeech();
+  }, []);
 
   useEffect(() => {
     if (window.matchMedia("(min-width: 1024px)").matches) setChatMode("open");
@@ -525,6 +676,12 @@ function LiveStreamContent() {
 
           if (mediaType === "audio") {
             remoteUser.audioTrack?.play();
+            if (!isHost && translatorLiveRef.current && hearTranslateRef.current) {
+              try {
+                remoteUser.audioTrack?.setVolume?.(12);
+              } catch {
+              }
+            }
           }
 
           setRemoteUsers((prev) => {
@@ -640,6 +797,30 @@ function LiveStreamContent() {
       if (n != null) setViewerCount(n);
     };
 
+    let lastGiftKey = "";
+    let lastGiftAt = 0;
+    const pushGiftToast = (raw: unknown) => {
+      void (async () => {
+        const gift = await resolveGiftSocketEvent(raw);
+        if (gift.streamId && gift.streamId !== streamId) return;
+        if (isCleanedUp) return;
+        const key = `${gift.senderName}|${gift.giftName}|${gift.quantity}`;
+        const now = Date.now();
+        if (key === lastGiftKey && now - lastGiftAt < 1500) return;
+        lastGiftKey = key;
+        lastGiftAt = now;
+        giftToastSeqRef.current += 1;
+        const id = `gift_${giftToastSeqRef.current}`;
+        const text = isHost
+          ? `${gift.senderName} sent ${gift.giftName} to you`
+          : `${gift.senderName} sent ${gift.giftName}`;
+        setGiftToasts((prev) => [...prev.slice(-4), { id, text }]);
+        window.setTimeout(() => {
+          setGiftToasts((prev) => prev.filter((t) => t.id !== id));
+        }, 4200);
+      })();
+    };
+
     const offs = [
       onSocketEvent(socketEvents.viewerCount, applyViewers),
       onSocketEvent("viewer_count", applyViewers),
@@ -656,8 +837,7 @@ function LiveStreamContent() {
         const chunk = normalizeCaptionPayload(raw);
         if (!chunk) return;
         if (chunk.streamId && chunk.streamId !== streamId) return;
-        const shown = captionTextForRole(chunk, isHost);
-        if (shown) showCaption(shown);
+        void handleViewerTranscript(chunk);
       }),
       onSocketEvent<unknown>(socketEvents.transcriptHistory, (raw) => {
         const payload = raw as Record<string, unknown> | null;
@@ -672,9 +852,11 @@ function LiveStreamContent() {
         const last = items.length ? items[items.length - 1] : null;
         const chunk = normalizeCaptionPayload(last);
         if (!chunk) return;
-        const shown = captionTextForRole(chunk, isHost);
-        if (shown) showCaption(shown);
+        void handleViewerTranscript(chunk);
       }),
+      onSocketEvent<unknown>(socketEvents.giftSent, pushGiftToast),
+      onSocketEvent<unknown>(socketEvents.streamGift, pushGiftToast),
+      onSocketEvent<unknown>("gift_received", pushGiftToast),
     ];
 
     return () => {
@@ -717,18 +899,25 @@ function LiveStreamContent() {
     streamHostId,
     router,
     showCaption,
+    handleViewerTranscript,
     joinAttempt,
   ]);
 
   useEffect(() => {
     return () => {
       if (captionClearRef.current) clearTimeout(captionClearRef.current);
+      if (interimTimerRef.current) clearTimeout(interimTimerRef.current);
     };
   }, []);
 
   useEffect(() => {
     if (!joined || !isHost) return;
     if (!stream?.captionsEnabled && !stream?.saveEnabled) return;
+    if (isMuted) {
+      setCaptionText("");
+      stopLiveSpeech();
+      return;
+    }
     const stop = startHostSpeechCaptions({
       lang: user?.language,
       onChunk: (chunk) => {
@@ -738,7 +927,7 @@ function LiveStreamContent() {
       },
     });
     return stop;
-  }, [joined, isHost, stream?.captionsEnabled, stream?.saveEnabled, streamId, user?.language, showCaption]);
+  }, [joined, isHost, isMuted, stream?.captionsEnabled, stream?.saveEnabled, streamId, user?.language, showCaption]);
 
   useEffect(() => {
     if (!joined || !billingEnabled || isBroadcaster || pricePerMinute <= 0) return;
@@ -1293,18 +1482,40 @@ function LiveStreamContent() {
 
           <div className="flex items-center gap-2">
             {(stream?.captionsEnabled || stream?.saveEnabled) ? (
-              <button
-                type="button"
-                onClick={() => setCaptionsOn((v) => !v)}
-                className={cn(
-                  "flex h-9 w-9 items-center justify-center rounded-full backdrop-blur-md transition active:scale-95",
-                  captionsOn ? "bg-brand-purple/30 text-white" : "bg-black/60 text-white/70 hover:bg-black/80"
-                )}
-                title={captionsOn ? "Hide captions" : "Show captions"}
-                aria-label="AI Translator"
-              >
-                <Languages className="h-4 w-4" />
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => setCaptionsOn((v) => !v)}
+                  className={cn(
+                    "flex h-9 w-9 items-center justify-center rounded-full backdrop-blur-md transition active:scale-95",
+                    captionsOn ? "bg-brand-purple/30 text-white" : "bg-black/60 text-white/70 hover:bg-black/80"
+                  )}
+                  title={captionsOn ? "Hide captions" : "Show captions"}
+                  aria-label="Live captions"
+                >
+                  <Languages className="h-4 w-4" />
+                </button>
+                {!isHost ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHearTranslate((v) => {
+                        const next = !v;
+                        if (next) unlockLiveSpeech();
+                        return next;
+                      });
+                    }}
+                    className={cn(
+                      "flex h-9 w-9 items-center justify-center rounded-full backdrop-blur-md transition active:scale-95",
+                      hearTranslate ? "bg-emerald-500/30 text-white" : "bg-black/60 text-white/70 hover:bg-black/80"
+                    )}
+                    title={hearTranslate ? "Hearing translation" : "Hear original only"}
+                    aria-label="Hear translation"
+                  >
+                    <Headphones className="h-4 w-4" />
+                  </button>
+                ) : null}
+              </>
             ) : null}
             <button
               type="button"
@@ -1438,6 +1649,20 @@ function LiveStreamContent() {
             <p className="rounded-2xl border border-white/10 bg-black/80 px-3.5 py-2 text-center font-sans text-xs font-semibold text-white shadow-lg backdrop-blur-md">
               {billingToast}
             </p>
+          </div>
+        ) : null}
+
+        {giftToasts.length ? (
+          <div className="pointer-events-none absolute inset-x-0 top-1/3 z-40 flex flex-col items-center gap-2 px-4">
+            {giftToasts.map((toast) => (
+              <div
+                key={toast.id}
+                className="flex max-w-[min(92%,420px)] items-center gap-2 rounded-2xl border border-amber-300/30 bg-gradient-to-r from-[#8A2DDC]/95 to-[#E8487E]/95 px-4 py-3 shadow-xl shadow-brand-purple/30 backdrop-blur-md"
+              >
+                <Gift className="h-5 w-5 shrink-0 text-white" />
+                <p className="font-sans text-sm font-bold leading-snug text-white">{toast.text}</p>
+              </div>
+            ))}
           </div>
         ) : null}
 

@@ -332,28 +332,24 @@ class _CollectibleFormState extends State<_CollectibleForm> {
     }
     setState(() => _publishing = true);
     try {
-      String? lastId;
-      for (var i = 0; i < _mediaItems.length; i++) {
-        final media = _mediaItems[i];
-        final created = await _clipsRepo.createCollectible(
-          filePath: media.file.path,
-          filename: uploadFilenameFor(media),
-          name: i == 0 ? _name.text.trim() : '${_name.text.trim()} (${i + 1})',
-          description: _description.text.trim().isEmpty ? null : _description.text.trim(),
-          price: price,
-          maxSupply: supply,
-        );
-        lastId = created.id;
-      }
+      final media = _mediaItems.first;
+      final created = await _clipsRepo.createCollectible(
+        filePath: media.file.path,
+        filename: uploadFilenameFor(media),
+        name: _name.text.trim(),
+        description: _description.text.trim().isEmpty ? null : _description.text.trim(),
+        price: price,
+        maxSupply: supply,
+      );
       if (!mounted) return;
-      _toast(_mediaItems.length > 1 ? 'Collectibles published' : 'Collectible published');
-      if (lastId == null || lastId.isEmpty) {
+      _toast('Collectible published');
+      if (created.id.isEmpty) {
         Navigator.pushReplacementNamed(context, '/profile/creator/created-clips');
       } else {
         Navigator.pushReplacementNamed(
           context,
           '/profile/creator/created-clips/detail',
-          arguments: lastId,
+          arguments: created.id,
         );
       }
     } catch (e) {
@@ -375,6 +371,7 @@ class _CollectibleFormState extends State<_CollectibleForm> {
         _MediaUploadPicker(
           mediaItems: _mediaItems,
           kind: GalleryMediaKind.imageOrVideo,
+          allowMultiple: false,
           onChanged: () => setState(() {}),
         ),
         const SizedBox(height: 20),
@@ -448,11 +445,13 @@ class _MediaUploadPicker extends StatefulWidget {
     required this.mediaItems,
     required this.kind,
     required this.onChanged,
+    this.allowMultiple = true,
   });
 
   final List<PickedGalleryMedia> mediaItems;
   final GalleryMediaKind kind;
   final VoidCallback onChanged;
+  final bool allowMultiple;
 
   @override
   State<_MediaUploadPicker> createState() => _MediaUploadPickerState();
@@ -462,9 +461,17 @@ class _MediaUploadPickerState extends State<_MediaUploadPicker> {
   final Map<String, String> _thumbs = {};
 
   Future<void> _pick() async {
-    final picked = await pickGalleryMediaMulti(context, kind: widget.kind, allowMultiple: true);
+    final picked = await pickGalleryMediaMulti(
+      context,
+      kind: widget.kind,
+      allowMultiple: widget.allowMultiple,
+    );
     if (picked.isEmpty || !mounted) return;
-    for (final item in picked) {
+    final items = widget.allowMultiple ? picked : picked.take(1);
+    if (!widget.allowMultiple) {
+      widget.mediaItems.clear();
+    }
+    for (final item in items) {
       if (!mounted) return;
       if (item.isVideo) {
         final edited = await openMediaEditor(context, item);
@@ -529,25 +536,34 @@ class _MediaUploadPickerState extends State<_MediaUploadPicker> {
                 child: const Icon(Icons.add_photo_alternate_rounded, color: Colors.white, size: 32),
               ),
               const SizedBox(height: 14),
-              const Text('Add photos or videos', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: _black)),
+              Text(
+                widget.allowMultiple ? 'Add photos or videos' : 'Add a photo or video',
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: _black),
+              ),
               const SizedBox(height: 4),
-              Text('Select multiple from library or camera', style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+              Text(
+                widget.allowMultiple
+                    ? 'Select multiple from library or camera'
+                    : 'Select from library or camera',
+                style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+              ),
             ],
           ),
         ),
       );
     }
 
+    final showAddMore = widget.allowMultiple;
     return Column(
       children: [
         SizedBox(
           height: 168,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
-            itemCount: widget.mediaItems.length + 1,
+            itemCount: widget.mediaItems.length + (showAddMore ? 1 : 0),
             separatorBuilder: (_, _) => const SizedBox(width: 10),
             itemBuilder: (context, index) {
-              if (index == widget.mediaItems.length) {
+              if (showAddMore && index == widget.mediaItems.length) {
                 return InkWell(
                   onTap: _pick,
                   borderRadius: BorderRadius.circular(16),

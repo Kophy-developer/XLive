@@ -7,9 +7,12 @@ import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../core/config/api_config.dart';
+import '../../core/i18n/translation_service.dart';
 import '../../core/live/agora_stream_controller.dart';
 import '../../core/live/agora_stream_view.dart';
 import '../../core/live/host_speech_captions.dart';
+import '../../core/live/live_hear_translation.dart';
+import '../../core/live/live_languages.dart';
 import '../../core/network/api_friendly_messages.dart';
 import '../../core/network/api_json.dart';
 import '../../core/session/auth_session.dart';
@@ -119,9 +122,31 @@ class _LiveHubScreenState extends State<LiveHubScreen> {
       final replaysFuture = _streamsRepo.listReplays(limit: 8);
       final results = await Future.wait([liveFuture, invitesFuture, replaysFuture]);
       if (!mounted) return;
-      final invites = (results[1] as List<StreamInvite>).where((i) => i.isPending).toList();
+      final live = results[0] as List<LiveStream>;
+      var invites = (results[1] as List<StreamInvite>).where((i) => i.isPending).toList();
+      invites = await Future.wait(invites.map((invite) async {
+        if (invite.isStreamEnded || invite.isStreamLiveOrScheduled) return invite;
+        final streamId = invite.streamId?.trim();
+        if (streamId == null || streamId.isEmpty) {
+          return invite.copyWith(streamStatus: 'ended');
+        }
+        if (live.any((s) => s.id == streamId)) {
+          return invite.copyWith(streamStatus: 'live');
+        }
+        try {
+          final stream = await _streamsRepo.getStream(streamId);
+          final status = (stream.status ?? '').trim();
+          return invite.copyWith(
+            streamStatus: status.isNotEmpty ? status : (stream.isLive ? 'live' : 'ended'),
+          );
+        } catch (_) {
+          return invite.copyWith(streamStatus: 'ended');
+        }
+      }));
+      invites = invites.where((i) => !i.isStreamEnded).toList();
+      if (!mounted) return;
       setState(() {
-        _live = results[0] as List<LiveStream>;
+        _live = live;
         _pendingInvites = invites;
         _replays = results[2] as List<LiveStream>;
         _loading = false;
@@ -1345,6 +1370,7 @@ class LiveDuringScreen extends StatefulWidget {
 class _LiveDuringScreenState extends State<LiveDuringScreen> with WidgetsBindingObserver {
   final _streamsRepo = StreamsRepository();
   final _giftsRepo = GiftsRepository();
+  final _usersRepo = UsersRepository();
   final _chatInput = TextEditingController();
   GlobalKey<AgoraStreamViewState> _agoraKey = GlobalKey<AgoraStreamViewState>();
   final _agoraController = AgoraStreamController();
@@ -1372,6 +1398,7 @@ class _LiveDuringScreenState extends State<LiveDuringScreen> with WidgetsBinding
   List<GiftCatalogItem> _giftCatalog = const [];
   int _commentSeq = 0;
   int _giftSeq = 0;
+  int _earnedGiftCoins = 0;
   StreamSubscription<Map<String, dynamic>>? _giftSub;
   StreamSubscription<Map<String, dynamic>>? _viewerSub;
   StreamSubscription<Map<String, dynamic>>? _viewersListSub;
@@ -1390,11 +1417,14 @@ class _LiveDuringScreenState extends State<LiveDuringScreen> with WidgetsBinding
   bool _ccPreferred = true;
   bool _ccVisible = false;
   bool _captionsSupported = false;
+  bool _hearTranslate = true;
   String? _activeCaptionSegmentId;
   String _activeCaptionText = '';
   final List<String> _finalCaptionLines = [];
   Timer? _perSecondBillingTimer;
+  Timer? _viewerPollTimer;
   HostSpeechCaptions? _hostSpeech;
+  String? _lastSpokenCaptionKey;
   int _sessionSeconds = 0;
   double _sessionCoinsCharged = 0.0;
   int _initialWalletBalance = 0;
@@ -1461,10 +1491,43 @@ class _LiveDuringScreenState extends State<LiveDuringScreen> with WidgetsBinding
     }
   }
 
+  void _applyViewerCount(int? count) {
+    if (count == null || count < 0) return;
+    if (count <= _viewerCount) return;
+    if (!mounted) {
+      _viewerCount = count;
+      return;
+    }
+    setState(() => _viewerCount = count);
+  }
+
+  int get _summaryGiftCoins {
+    final fromStream = _stream?.giftPoints ?? 0;
+    return _earnedGiftCoins > fromStream ? _earnedGiftCoins : fromStream;
+  }
+
+  int? _parseViewerCount(dynamic raw) {
+    if (raw is Map) {
+      return int.tryParse('${raw['viewerCount'] ?? raw['count'] ?? raw['viewers'] ?? raw['total']}');
+    }
+    return int.tryParse('$raw');
+  }
+
+  void _startViewerPoll(String streamId) {
+    _viewerPollTimer?.cancel();
+    _viewerPollTimer = Timer.periodic(const Duration(seconds: 8), (_) async {
+      try {
+        final stream = await _streamsRepo.getStream(streamId);
+        _applyViewerCount(stream.viewerCount);
+      } catch (_) {}
+    });
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _perSecondBillingTimer?.cancel();
+    _viewerPollTimer?.cancel();
     final id = _streamId;
     if (id != null && id.isNotEmpty && !_streamEnded) {
       if (_isHost) {
@@ -1483,6 +1546,8 @@ class _LiveDuringScreenState extends State<LiveDuringScreen> with WidgetsBinding
         chargedCoins: _sessionCoinsCharged.ceil(),
       );
     }
+    unawaited(LiveHearTranslation.instance.stop());
+    _agoraController.setRemoteAudioDucked(false);
     _agoraController.removeListener(_onAgoraController);
     _agoraController.dispose();
     _giftSub?.cancel();
@@ -1617,6 +1682,7 @@ class _LiveDuringScreenState extends State<LiveDuringScreen> with WidgetsBinding
           });
           return;
         }
+        _applyViewerCount(_parseViewerCount(ack));
       }
       AgoraStreamToken? token;
       if (AuthSession.instance.isSignedIn) {
@@ -1635,7 +1701,7 @@ class _LiveDuringScreenState extends State<LiveDuringScreen> with WidgetsBinding
           }
         }
       }
-      _viewerCount = stream.viewerCount;
+      _applyViewerCount(stream.viewerCount);
       final captionsSupported = stream.supportsCaptions;
       final ccPreferred = await AuthSession.instance.sessionStore.readLiveCaptionsEnabled();
       List<StreamCohostMember> cohosts = const [];
@@ -1663,6 +1729,7 @@ class _LiveDuringScreenState extends State<LiveDuringScreen> with WidgetsBinding
         _startPerSecondBilling(stream.pricePerMinute);
       }
       _bindSocket(id);
+      _startViewerPoll(id);
       unawaited(_loadStreamChatHistory(id));
       if (_isHost) {
         XLiveSocketClient.instance.requestStreamViewers(id);
@@ -1670,6 +1737,9 @@ class _LiveDuringScreenState extends State<LiveDuringScreen> with WidgetsBinding
       if (_isHost && (stream.captionsEnabled || stream.saveEnabled)) {
         _hostSpeech = HostSpeechCaptions(onChunk: _handleHostCaptionLine);
         unawaited(_hostSpeech!.start(lang: AuthSession.instance.user?.language));
+      } else if (!_isHost && _hearTranslate && (stream.captionsEnabled || stream.saveEnabled)) {
+        _agoraController.setRemoteAudioDucked(true);
+        LiveHearTranslation.instance.enabled = true;
       }
     } catch (e) {
       if (!mounted) return;
@@ -1723,35 +1793,19 @@ class _LiveDuringScreenState extends State<LiveDuringScreen> with WidgetsBinding
     final socket = XLiveSocketClient.instance;
     _giftSub = socket.onGiftSent.listen((event) {
       if (event['streamId']?.toString() != id) return;
-      if (!mounted) return;
-      final sender = event['senderName']?.toString() ?? event['sender']?.toString() ?? 'Viewer';
-      final giftObj = event['gift'];
-      String giftLabel = event['giftName']?.toString() ?? 'Gift';
-      if (giftObj is Map) {
-        giftLabel = giftObj['name']?.toString() ?? giftObj['title']?.toString() ?? giftLabel;
-      }
-      final qty = int.tryParse('${event['quantity'] ?? 1}') ?? 1;
-      HapticFeedback.mediumImpact();
-      setState(() {
-        _giftSeq += 1;
-        _giftBursts.add(LiveGiftBurst(id: 'g$_giftSeq', senderName: sender, giftLabel: giftLabel, quantity: qty));
-        if (_giftBursts.length > 8) _giftBursts.removeAt(0);
-      });
-      if (_isHost) AuthSession.instance.refreshWallet();
+      unawaited(_handleGiftSentEvent(event));
     });
     _viewerSub = socket.onStreamViewerCount.listen((event) {
       if (event['streamId']?.toString() != id) return;
-      final count = int.tryParse('${event['viewerCount'] ?? event['count'] ?? event['viewers']}');
-      if (count == null || !mounted) return;
-      setState(() => _viewerCount = count);
+      _applyViewerCount(_parseViewerCount(event));
     });
     _viewersListSub = socket.onStreamViewers.listen((event) {
       if (event['streamId']?.toString() != id) return;
       final raw = event['viewers'] ?? event['users'] ?? event['items'];
       if (raw is! List || !mounted) return;
-      final count = int.tryParse('${event['viewerCount'] ?? event['count']}');
+      final count = _parseViewerCount(event) ?? raw.length;
       setState(() {
-        if (count != null) _viewerCount = count;
+        if (count > _viewerCount) _viewerCount = count;
         _viewers
           ..clear()
           ..addAll(
@@ -1783,7 +1837,7 @@ class _LiveDuringScreenState extends State<LiveDuringScreen> with WidgetsBinding
       Navigator.pushReplacementNamed(
         context,
         '/live/summary',
-        arguments: LiveSummaryArgs(streamId: id, viewerCount: _viewerCount, giftPoints: _stream?.giftPoints ?? 0),
+        arguments: LiveSummaryArgs(streamId: id, viewerCount: _viewerCount, giftPoints: _summaryGiftCoins),
       );
     });
     _removedSub = socket.onViewerRemoved.listen((event) async {
@@ -1982,6 +2036,54 @@ class _LiveDuringScreenState extends State<LiveDuringScreen> with WidgetsBinding
     } else {
       apply();
     }
+
+    if (!_isHost && line.isFinal && line.text.trim().isNotEmpty) {
+      unawaited(_maybeSpeakTranslated(line));
+    }
+  }
+
+  Future<void> _maybeSpeakTranslated(StreamTranscriptLine line) async {
+    final target = normalizeLiveLang(AuthSession.instance.user?.language);
+    final profileTarget = target.isEmpty ? 'en' : target;
+
+    final result = await TranslationService.instance.translate(
+      line.text,
+      sourceLang: null,
+      targetLang: profileTarget,
+    );
+    final spoken = result.text.trim().isEmpty ? line.text.trim() : result.text.trim();
+    if (!mounted || spoken.isEmpty) return;
+
+    if (_ccVisible && spoken != line.text) {
+      setState(() {
+        if (_finalCaptionLines.isNotEmpty && _finalCaptionLines.last == line.text) {
+          _finalCaptionLines[_finalCaptionLines.length - 1] = spoken;
+        } else if (_finalCaptionLines.isEmpty || _finalCaptionLines.last != spoken) {
+          _finalCaptionLines.add(spoken);
+          if (_finalCaptionLines.length > 8) {
+            _finalCaptionLines.removeRange(0, _finalCaptionLines.length - 8);
+          }
+        }
+      });
+    }
+
+    if (!_hearTranslate) return;
+    final key = '${line.segmentId}|$spoken';
+    if (_lastSpokenCaptionKey == key) return;
+    _lastSpokenCaptionKey = key;
+    _agoraController.setRemoteAudioDucked(true);
+    await LiveHearTranslation.instance.speak(spoken, targetLang: profileTarget);
+  }
+
+  void _setHearTranslate(bool enabled) {
+    setState(() => _hearTranslate = enabled);
+    LiveHearTranslation.instance.enabled = enabled;
+    if (!enabled) {
+      unawaited(LiveHearTranslation.instance.stop());
+      _agoraController.setRemoteAudioDucked(false);
+    } else if (!_isHost) {
+      _agoraController.setRemoteAudioDucked(true);
+    }
   }
 
   Future<void> _toggleCc() async {
@@ -2055,6 +2157,77 @@ class _LiveDuringScreenState extends State<LiveDuringScreen> with WidgetsBinding
         _pushComment(sender: parsed.sender, content: parsed.content);
       }
     } catch (_) {}
+  }
+
+  Future<void> _handleGiftSentEvent(Map<String, dynamic> event) async {
+    final data = event['data'] is Map ? Map<String, dynamic>.from(event['data'] as Map) : event;
+    final senderObj = data['sender'] ?? data['user'] ?? data['from'];
+    String? senderName = data['senderName']?.toString();
+    if ((senderName == null || senderName.isEmpty) && senderObj is Map) {
+      senderName = senderObj['displayName']?.toString() ??
+          senderObj['username']?.toString() ??
+          senderObj['name']?.toString();
+    }
+    final senderId = data['senderId']?.toString() ??
+        (senderObj is Map ? (senderObj['id'] ?? senderObj['_id'])?.toString() : null);
+    if ((senderName == null || senderName.isEmpty || senderName == 'Viewer') &&
+        senderId != null &&
+        senderId.isNotEmpty) {
+      try {
+        final user = await _usersRepo.getUser(senderId);
+        final resolved = user.effectiveDisplayName.trim();
+        if (resolved.isNotEmpty && resolved != 'User') senderName = resolved;
+      } catch (_) {}
+    }
+    final resolvedSender = (senderName == null || senderName.isEmpty) ? 'Viewer' : senderName;
+
+    final giftObj = data['gift'];
+    String giftLabel = data['giftName']?.toString() ?? 'Gift';
+    final giftId = data['giftId']?.toString() ??
+        (giftObj is Map ? (giftObj['id'] ?? giftObj['_id'])?.toString() : null);
+    if (giftObj is Map) {
+      giftLabel = giftObj['name']?.toString() ?? giftObj['title']?.toString() ?? giftLabel;
+    }
+    if ((giftLabel.isEmpty || giftLabel == 'Gift') && giftId != null && giftId.isNotEmpty) {
+      for (final item in _giftCatalog) {
+        if (item.id == giftId) {
+          giftLabel = item.name;
+          break;
+        }
+      }
+    }
+    final qty = int.tryParse('${data['quantity'] ?? event['quantity'] ?? 1}') ?? 1;
+    var unitCoins = 0;
+    if (giftObj is Map) {
+      unitCoins = int.tryParse('${giftObj['price'] ?? giftObj['cost'] ?? giftObj['coinPrice'] ?? giftObj['points'] ?? 0}') ?? 0;
+    }
+    if (unitCoins <= 0 && giftId != null && giftId.isNotEmpty) {
+      for (final item in _giftCatalog) {
+        if (item.id == giftId) {
+          unitCoins = item.price;
+          break;
+        }
+      }
+    }
+    final eventCoins = int.tryParse('${data['points'] ?? data['coins'] ?? data['amount'] ?? event['points'] ?? 0}') ?? 0;
+    final addCoins = eventCoins > 0 ? eventCoins : unitCoins * (qty <= 0 ? 1 : qty);
+    if (!mounted) return;
+    HapticFeedback.mediumImpact();
+    setState(() {
+      _giftSeq += 1;
+      if (addCoins > 0) _earnedGiftCoins += addCoins;
+      _giftBursts.add(
+        LiveGiftBurst(
+          id: 'g$_giftSeq',
+          senderName: resolvedSender,
+          giftLabel: giftLabel,
+          quantity: qty,
+          toHost: _isHost,
+        ),
+      );
+      if (_giftBursts.length > 8) _giftBursts.removeAt(0);
+    });
+    if (_isHost) AuthSession.instance.refreshWallet();
   }
 
   ({String sender, String content}) _parseStreamChatEvent(Map<String, dynamic> event) {
@@ -2253,7 +2426,7 @@ class _LiveDuringScreenState extends State<LiveDuringScreen> with WidgetsBinding
         arguments: LiveSummaryArgs(
           streamId: id,
           viewerCount: _viewerCount,
-          giftPoints: _stream?.giftPoints ?? 0,
+          giftPoints: _summaryGiftCoins,
           initialReplay: initialReplay,
           replayUploadFailed: replayUploadFailed,
         ),
@@ -2351,7 +2524,7 @@ class _LiveDuringScreenState extends State<LiveDuringScreen> with WidgetsBinding
           arguments: LiveSummaryArgs(
             streamId: id,
             viewerCount: _viewerCount,
-            giftPoints: _stream?.giftPoints ?? 0,
+            giftPoints: _summaryGiftCoins,
             initialReplay: uploadedReplay,
             replayUploadFailed: replayUploadFailed,
           ),
@@ -2878,6 +3051,14 @@ class _LiveDuringScreenState extends State<LiveDuringScreen> with WidgetsBinding
                             active: _ccVisible,
                             onPressed: _toggleCc,
                           ),
+                          if (!_isHost) ...[
+                            const SizedBox(width: 2),
+                            LiveHearTranslateToggleButton(
+                              enabled: true,
+                              active: _hearTranslate,
+                              onPressed: () => _setHearTranslate(!_hearTranslate),
+                            ),
+                          ],
                         ],
                         IconButton(
                           visualDensity: VisualDensity.compact,
@@ -3107,6 +3288,21 @@ class _LiveSummaryScreenState extends State<LiveSummaryScreen> {
   void dispose() {
     _replayPollTimer?.cancel();
     super.dispose();
+  }
+
+  int get _coinsEarned {
+    final fromGifts = _gifts.fold<int>(0, (sum, g) => sum + (g.points > 0 ? g.points : 0));
+    final fromArgs = widget.args?.giftPoints ?? 0;
+    return fromGifts > fromArgs ? fromGifts : fromArgs;
+  }
+
+  String _coinsEarnedLabel() {
+    final n = _coinsEarned;
+    if (n <= 0 && _gifts.isNotEmpty) {
+      final count = _gifts.fold<int>(0, (sum, g) => sum + (g.quantity <= 0 ? 1 : g.quantity));
+      return count == 1 ? '1 gift earned' : '$count gifts earned';
+    }
+    return n == 1 ? '1 coin earned' : '$n coins earned';
   }
 
   Future<void> _load() async {
@@ -3351,7 +3547,7 @@ class _LiveSummaryScreenState extends State<LiveSummaryScreen> {
             const Text('Stream ended', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
             const SizedBox(height: 10),
             Text(
-              '${args?.viewerCount ?? 0} viewers · ${args?.giftPoints ?? 0} gift points',
+              '${args?.viewerCount ?? 0} viewers · ${_coinsEarnedLabel()}',
               style: const TextStyle(color: Colors.black54),
             ),
             if (replay != null && replay.saveEnabled) ...[
@@ -3376,8 +3572,8 @@ class _LiveSummaryScreenState extends State<LiveSummaryScreen> {
                       leading: gift.iconUrl == null
                           ? const Icon(Icons.card_giftcard_rounded)
                           : CircleAvatar(backgroundImage: NetworkImage(gift.iconUrl!)),
-                      title: Text(gift.giftName ?? 'Gift'),
-                      subtitle: Text(gift.senderName ?? 'Viewer'),
+                      title: Text('${gift.senderName ?? 'Viewer'} sent ${gift.giftName ?? 'Gift'}'),
+                      subtitle: Text(gift.quantity > 1 ? '×${gift.quantity}' : 'Gift'),
                       trailing: Text('x${gift.quantity}'),
                     );
                   },

@@ -7,6 +7,7 @@ class AgoraStreamController extends ChangeNotifier {
   bool _hostCameraEnabled = true;
   bool _screenShareActive = false;
   bool _canFlipCamera = false;
+  bool _remoteAudioDucked = false;
   final Set<int> _remoteScreenUids = <int>{};
   bool _disposed = false;
 
@@ -17,10 +18,17 @@ class AgoraStreamController extends ChangeNotifier {
   bool get screenShareActive => _screenShareActive;
   bool get hasRemoteScreenShare => _remoteScreenUids.isNotEmpty;
   bool get canFlipCamera => _canFlipCamera;
+  bool get remoteAudioDucked => _remoteAudioDucked;
 
   void setCanFlipCamera(bool value) {
     if (_canFlipCamera == value) return;
     _canFlipCamera = value;
+    notifyListeners();
+  }
+
+  void setRemoteAudioDucked(bool value) {
+    if (_remoteAudioDucked == value) return;
+    _remoteAudioDucked = value;
     notifyListeners();
   }
 
@@ -71,6 +79,7 @@ class AgoraStreamController extends ChangeNotifier {
     _micPublishEnabled = false;
     _screenShareActive = false;
     _canFlipCamera = false;
+    _remoteAudioDucked = false;
     _remoteScreenUids.clear();
     notifyListeners();
   }

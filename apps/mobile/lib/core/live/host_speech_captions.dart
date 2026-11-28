@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:speech_to_text/speech_to_text.dart';
 
 import '../../features/streams/models/stream_transcript_models.dart';
+import 'live_languages.dart';
 
 class HostSpeechCaptions {
   HostSpeechCaptions({required this.onChunk});
@@ -17,31 +18,32 @@ class HostSpeechCaptions {
     _wanted = true;
     if (_starting) return;
     _starting = true;
+    final locale = speechLocaleForLang(lang);
+    final source = normalizeLiveLang(lang);
     try {
       final ready = await _speech.initialize(
         onStatus: (status) {
           if (!_wanted) return;
           if (status == 'done' || status == 'notListening') {
-            unawaited(_listen(lang: lang));
+            unawaited(_listen(locale: locale, source: source));
           }
         },
         onError: (_) {
           if (!_wanted) return;
           unawaited(Future<void>.delayed(const Duration(milliseconds: 600), () {
-            if (_wanted) unawaited(_listen(lang: lang));
+            if (_wanted) unawaited(_listen(locale: locale, source: source));
           }));
         },
       );
       if (!ready || !_wanted) return;
-      await _listen(lang: lang);
+      await _listen(locale: locale, source: source);
     } finally {
       _starting = false;
     }
   }
 
-  Future<void> _listen({String? lang}) async {
+  Future<void> _listen({required String locale, required String source}) async {
     if (!_wanted || _speech.isListening) return;
-    final locale = (lang == null || lang.trim().isEmpty) ? null : lang.trim();
     try {
       await _speech.listen(
         onResult: (result) {
@@ -52,7 +54,7 @@ class HostSpeechCaptions {
               segmentId: 'speech_${DateTime.now().millisecondsSinceEpoch}',
               text: text,
               mode: 'original',
-              lang: locale ?? '',
+              lang: source.isEmpty ? locale : source,
               isFinal: result.finalResult,
               timestamp: DateTime.now().millisecondsSinceEpoch,
             ),

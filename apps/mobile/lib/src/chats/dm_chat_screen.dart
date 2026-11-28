@@ -9,6 +9,7 @@ import '../../core/network/api_exception.dart';
 import '../../core/network/api_friendly_messages.dart';
 import '../../core/media/media_url.dart';
 import '../../core/i18n/translation_service.dart';
+import '../../core/utils/safe_text.dart';
 import '../../core/widgets/connection_status_pill.dart';
 import '../../core/widgets/user_avatar.dart';
 import '../../core/socket/xlive_socket_client.dart';
@@ -308,7 +309,7 @@ class _DmChatScreenState extends State<DmChatScreen> {
   String _replyBannerLabel(ChatMessage message) {
     final text = message.content?.trim() ?? '';
     if (text.isNotEmpty) {
-      return text.length > 48 ? '${text.substring(0, 48)}…' : text;
+      return truncateSafely(text, 48);
     }
     if (message.isAudio) return 'Voice note';
     if (message.isVideo) return 'Video';
@@ -902,7 +903,7 @@ class _DmChatScreenState extends State<DmChatScreen> {
                                         timeLabel: m.timeLabel,
                                         showReadReceipt: true,
                                         imageUrl: !row.isAlbum && m.hasMedia && m.isImage
-                                            ? resolveMediaUrl(m.mediaUrl)
+                                            ? resolveMediaUrl(m.mediaUrl, resourceType: 'image')
                                             : null,
                                         albumMedia: albumMedia,
                                         videoUrl: !row.isAlbum && m.hasMedia && m.isVideo
@@ -923,7 +924,7 @@ class _DmChatScreenState extends State<DmChatScreen> {
                                         timeLabel: m.timeLabel,
                                         avatarUrl: m.senderAvatarUrl ?? widget.peerAvatarUrl,
                                         imageUrl: !row.isAlbum && m.hasMedia && m.isImage
-                                            ? resolveMediaUrl(m.mediaUrl)
+                                            ? resolveMediaUrl(m.mediaUrl, resourceType: 'image')
                                             : null,
                                         albumMedia: albumMedia,
                                         videoUrl: !row.isAlbum && m.hasMedia && m.isVideo

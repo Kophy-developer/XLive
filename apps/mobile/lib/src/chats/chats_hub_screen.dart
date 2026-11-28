@@ -334,10 +334,18 @@ class _ChatsHubScreenState extends State<ChatsHubScreen> with WidgetsBindingObse
       List<XLiveUser> people;
       try {
         final feed = await feedRepo.followersFeed(limit: 12);
-        people = feed
-            .where((f) => f.creatorId != null && f.creatorId!.isNotEmpty)
-            .map((f) => XLiveUser(id: f.creatorId!, displayName: f.creatorName, avatarUrl: f.creatorAvatarUrl, isCreator: true))
-            .toList();
+        final deduped = <String, XLiveUser>{};
+        for (final f in feed) {
+          final id = f.creatorId?.trim();
+          if (id == null || id.isEmpty) continue;
+          final name = f.creatorName?.trim();
+          if (name == null || name.isEmpty) continue;
+          deduped.putIfAbsent(
+            id,
+            () => XLiveUser(id: id, displayName: name, avatarUrl: f.creatorAvatarUrl, isCreator: true),
+          );
+        }
+        people = deduped.values.toList();
         if (people.isEmpty) throw StateError('empty');
       } catch (_) {
         people = await usersRepo.listOnline(limit: 12);
@@ -349,6 +357,7 @@ class _ChatsHubScreenState extends State<ChatsHubScreen> with WidgetsBindingObse
       for (final user in people) {
         if (user.id.isEmpty || user.id == selfId || dmPeerIds.contains(user.id)) continue;
         final name = user.effectiveDisplayName;
+        if (name.isEmpty || name == 'User') continue;
         final live = LiveNowStore.instance.isLive(user.id);
         rows.add(
           SuggestedCreatorRow(
@@ -356,8 +365,8 @@ class _ChatsHubScreenState extends State<ChatsHubScreen> with WidgetsBindingObse
             name: name,
             avatarUrl: user.avatarUrl ?? '',
             subtitle: live ? 'Live now' : (user.isCreator ? 'Creator on Xlive' : 'Online now'),
-            actionKind: user.isCreator ? SuggestedActionKind.callPerMin : SuggestedActionKind.sayHi,
-            callPricePerMin: user.isCreator ? 300 : null,
+            actionKind: SuggestedActionKind.sayHi,
+            callPricePerMin: null,
             isLive: live,
           ),
         );

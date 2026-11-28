@@ -8,6 +8,7 @@ import '../../core/network/api_friendly_messages.dart';
 import '../../core/media/media_url.dart';
 import '../../core/i18n/translation_service.dart';
 import '../../core/session/auth_session.dart';
+import '../../core/utils/safe_text.dart';
 import '../../core/socket/xlive_socket_client.dart';
 import '../../features/calls/calls_repository.dart';
 import '../../features/calls/models/call_models.dart';
@@ -94,6 +95,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> with WidgetsBindingOb
   final _dismissedGroupCallIds = <String>{};
   final Set<String> _removedMessageIds = <String>{};
   final Map<String, String> _memberAvatarById = {};
+  final Map<String, String> _memberNameById = {};
   bool _loadingMessages = false;
   bool _messagesReady = false;
   bool _historyHidden = false;
@@ -253,25 +255,39 @@ class _GroupChatScreenState extends State<GroupChatScreen> with WidgetsBindingOb
     try {
       final members = await _groupsRepo.listMembers(groupId, limit: 100);
       if (!mounted) return;
-      final map = <String, String>{};
+      final avatars = <String, String>{};
+      final names = <String, String>{};
       for (final m in members) {
         final url = m.avatarUrl?.trim();
-        if (url != null && url.isNotEmpty) map[m.id] = url;
+        if (url != null && url.isNotEmpty) avatars[m.id] = url;
+        final name = m.name.trim();
+        if (name.isNotEmpty && name != 'Member') names[m.id] = name;
       }
-      setState(() => _memberAvatarById
-        ..clear()
-        ..addAll(map));
+      setState(() {
+        _memberAvatarById
+          ..clear()
+          ..addAll(avatars);
+        _memberNameById
+          ..clear()
+          ..addAll(names);
+      });
     } catch (_) {}
   }
 
   ChatMessage _enrichMessageAvatar(ChatMessage m) {
-    final existing = m.senderAvatarUrl?.trim();
-    if (existing != null && existing.isNotEmpty) return m;
     final id = m.senderId?.trim();
     if (id == null || id.isEmpty) return m;
-    final fromMembers = _memberAvatarById[id];
-    if (fromMembers == null || fromMembers.isEmpty) return m;
-    return m.copyWith(senderAvatarUrl: fromMembers);
+    final existingAvatar = m.senderAvatarUrl?.trim();
+    final existingName = m.senderName?.trim();
+    final fromAvatar = _memberAvatarById[id];
+    final fromName = _memberNameById[id];
+    final nextAvatar = (existingAvatar == null || existingAvatar.isEmpty) ? fromAvatar : null;
+    final nextName = (existingName == null || existingName.isEmpty || existingName == 'Member') ? fromName : null;
+    if ((nextAvatar == null || nextAvatar.isEmpty) && (nextName == null || nextName.isEmpty)) return m;
+    return m.copyWith(
+      senderAvatarUrl: nextAvatar,
+      senderName: nextName,
+    );
   }
 
   Future<void> _loadApiMessages() async {
@@ -393,7 +409,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> with WidgetsBindingOb
   String _snippetForApiReply(ChatMessage m) {
     final text = m.content?.trim() ?? '';
     if (text.isNotEmpty) {
-      return text.length > 48 ? '${text.substring(0, 48)}…' : text;
+      return truncateSafely(text, 48);
     }
     if (m.isAudio) return 'Voice note';
     if (m.isVideo) return 'Video';
@@ -1051,7 +1067,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> with WidgetsBindingOb
                   text: bubbleText,
                   timeLabel: m.timeLabel,
                   showReadReceipt: true,
-                  imageUrl: !row.isAlbum && m.hasMedia && m.isImage ? resolveMediaUrl(m.mediaUrl) : null,
+                  imageUrl: !row.isAlbum && m.hasMedia && m.isImage
+                      ? resolveMediaUrl(m.mediaUrl, resourceType: 'image')
+                      : null,
                   albumMedia: albumMedia,
                   videoUrl: !row.isAlbum && m.hasMedia && m.isVideo
                       ? resolveMediaUrl(m.mediaUrl, resourceType: 'video')
@@ -1072,7 +1090,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> with WidgetsBindingOb
                   avatarUrl: m.senderAvatarUrl ?? '',
                   senderName: showSenderName ? senderLabel : null,
                   senderColor: _senderColorFor(m.senderId, m.senderName),
-                  imageUrl: !row.isAlbum && m.hasMedia && m.isImage ? resolveMediaUrl(m.mediaUrl) : null,
+                  imageUrl: !row.isAlbum && m.hasMedia && m.isImage
+                      ? resolveMediaUrl(m.mediaUrl, resourceType: 'image')
+                      : null,
                   albumMedia: albumMedia,
                   videoUrl: !row.isAlbum && m.hasMedia && m.isVideo
                       ? resolveMediaUrl(m.mediaUrl, resourceType: 'video')
@@ -1148,7 +1168,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> with WidgetsBindingOb
       return;
     }
     final snippet = _replyTarget != null ? _snippetForReply(_replyTarget!) : null;
-    final shortSnippet = snippet != null && snippet.length > 48 ? '${snippet.substring(0, 48)}…' : snippet;
+    final shortSnippet = snippet == null ? null : truncateSafely(snippet, 48);
     setState(() {
       _messages.add(
         GroupThreadMessage.outgoing(

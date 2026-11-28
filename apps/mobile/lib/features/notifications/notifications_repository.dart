@@ -15,6 +15,7 @@ class InboxNotification {
     required this.title,
     this.body,
     this.readAt,
+    this.createdAt,
     this.data = const {},
     this.targetUrl,
   });
@@ -24,6 +25,7 @@ class InboxNotification {
   final String title;
   final String? body;
   final String? readAt;
+  final String? createdAt;
   final Map<String, dynamic> data;
   final String? targetUrl;
 
@@ -38,6 +40,7 @@ class InboxNotification {
       title: (ApiJson.pickString(json, ['title', 'subject']) ?? 'Notification').trim(),
       body: ApiJson.pickString(json, ['body', 'message', 'content']),
       readAt: ApiJson.pickString(json, ['readAt']),
+      createdAt: ApiJson.pickString(json, ['createdAt', 'timestamp', 'date']),
       data: data,
       targetUrl: ApiJson.pickString(json, ['targetUrl', 'url', 'link']),
     );

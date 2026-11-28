@@ -147,7 +147,7 @@ class _CreatorStoreComboSheetState extends State<CreatorStoreComboSheet> {
       await _clipsRepo.purchaseCollectible(clip.id);
       await AuthSession.instance.refreshWallet();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Clip added to your collection')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Clip added to My clips')));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1421,7 +1421,8 @@ class _WalletTxRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final positive = tx.amount >= 0;
+    final positive = tx.isCredit;
+    final absolute = tx.amount.abs();
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Row(
@@ -1442,7 +1443,7 @@ class _WalletTxRow extends StatelessWidget {
           const SizedBox(width: 12),
           Expanded(
             child: Text(
-              tx.description ?? tx.type ?? 'Transaction',
+              tx.displayLabel,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: _black),
@@ -1450,7 +1451,7 @@ class _WalletTxRow extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           Text(
-            '${positive ? '+' : ''}${tx.amount}',
+            '${positive ? '+' : '-'}$absolute',
             style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: positive ? const Color(0xFF2EAD5B) : const Color(0xFFE53935)),
           ),
         ],

@@ -44,33 +44,25 @@ class _SignInScreenState extends State<SignInScreen> {
 
   Future<void> _submit() async {
     final password = _passwordCtrl.text;
-    final passwordError = validateAuthPassword(password);
-    if (passwordError != null) {
-      _showError(passwordError);
+    if (password.isEmpty) {
+      _showError('Enter your password.');
       return;
     }
 
     final identifier = _usernameMode ? _usernameCtrl.text.trim() : _emailCtrl.text.trim();
     if (identifier.isEmpty) {
-      _showError(_usernameMode ? 'Enter your username.' : 'Enter your email address.');
+      _showError(_usernameMode ? 'Enter your username or phone number.' : 'Enter your email address.');
       return;
     }
 
     setState(() => _submitting = true);
     try {
-      await AuthSession.instance.signInWithCredentials(
-        identifier: identifier,
-        password: password,
-        email: _usernameMode ? null : identifier,
-        username: _usernameMode ? identifier : null,
-      );
+      await AuthSession.instance.signInWithCredentials(identifier: identifier, password: password);
       if (!mounted) return;
       Navigator.pushNamedAndRemoveUntil(context, '/home', (r) => false);
-    } on VerificationRequiredException catch (e) {
+    } on EmailNotVerifiedException catch (e) {
       if (!mounted) return;
       await _openVerification(e);
-    } on BridgeUserNotFoundException catch (e) {
-      _showError(e.message);
     } catch (e) {
       _showError(authErrorMessage(e));
     } finally {
@@ -78,43 +70,28 @@ class _SignInScreenState extends State<SignInScreen> {
     }
   }
 
-  Future<void> _openVerification(VerificationRequiredException e) async {
+  /// 403 from login: the email is unverified. The 403 sends no code
+  /// (`verificationSent: false`), so send one, then open the verify screen.
+  Future<void> _openVerification(EmailNotVerifiedException e) async {
+    final email = e.email;
     try {
-      await AuthSession.instance.authRepository.requestVerificationCode(
-        userId: e.userId,
-        type: e.verificationType,
-      );
+      await AuthSession.instance.authRepository.resendVerification(email);
     } catch (err) {
       _showError(authErrorMessage(err));
       return;
     }
     if (!mounted) return;
-    final destination = e.verificationType == 'email' ? (e.email ?? e.identifier) : e.identifier;
     await Navigator.push<void>(
       context,
       MaterialPageRoute<void>(
         builder: (_) => RegisterVerifyScreen(
-          draft: RegisterDraft(
-            userId: e.userId,
-            email: e.email,
-            password: e.password,
-            username: e.username,
-          ),
-          destinationLine: destination,
-          emailHighlight: e.verificationType == 'email' ? destination : '',
-          verificationType: e.verificationType,
+          draft: RegisterDraft(email: email),
+          destinationLine: email,
+          emailHighlight: email,
+          verificationType: 'email',
           onVerified: (code) async {
-            await AuthSession.instance.signInAfterVerifyCode(
-              userId: e.userId,
-              code: code,
-              verificationType: e.verificationType,
-              identifier: e.identifier,
-              password: e.password,
-              email: e.email,
-              phone: e.phone,
-              username: e.username,
-            );
-            if (!context.mounted) return;
+            await AuthSession.instance.verifyEmailAndSignIn(email: email, code: code);
+            if (!mounted) return;
             Navigator.pushNamedAndRemoveUntil(context, '/home', (r) => false);
           },
         ),
@@ -188,7 +165,7 @@ class _SignInScreenState extends State<SignInScreen> {
                         controller: _usernameCtrl,
                         textCapitalization: TextCapitalization.none,
                         autocorrect: false,
-                        decoration: authInputDecoration(hintText: 'Username'),
+                        decoration: authInputDecoration(hintText: 'Username or phone number'),
                       ),
                       const SizedBox(height: 14),
                       TextField(

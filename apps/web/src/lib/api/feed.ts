@@ -43,16 +43,29 @@ export function normalizePublicUser(raw: unknown): XLiveUser {
       : root
   ) as Record<string, unknown>;
   const username = pickHandle(d) || pickHandle(root);
+  const languageRaw = d.language ?? d.lang ?? root.language ?? root.lang;
+  const language =
+    typeof languageRaw === "string" && languageRaw.trim()
+      ? languageRaw.trim().toLowerCase()
+      : undefined;
+  const settingsRaw =
+    (d.settings && typeof d.settings === "object" ? d.settings : null) ||
+    (root.settings && typeof root.settings === "object" ? root.settings : null);
   return {
     id: String(d.id ?? d._id ?? root.id ?? root._id ?? ""),
     username: username || "",
     displayName: (d.displayName ?? d.name ?? d.firstName) as string | undefined,
     avatarUrl: (d.avatarUrl ?? d.avatar ?? d.profileImage) as string | undefined,
     bio: d.bio as string | undefined,
+    gender: (d.gender ?? root.gender) as string | undefined,
+    language,
     isCreator: Boolean(d.isCreator ?? d.creator ?? root.isCreator) || String(d.role ?? root.role ?? "") === "creator",
     followerCount: pickMetric(d.followerCount, d.followersCount, d.followers),
     followingCount: pickMetric(d.followingCount, d.following),
     isFollowing: d.isFollowing === true || root.isFollowing === true,
+    settings: settingsRaw
+      ? (settingsRaw as XLiveUser["settings"])
+      : undefined,
   };
 }
 

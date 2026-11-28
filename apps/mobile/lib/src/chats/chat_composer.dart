@@ -2,9 +2,9 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/media/media_url.dart';
 import '../../core/widgets/user_avatar.dart';
@@ -425,6 +425,28 @@ bool isStickerText(String text) {
   if (t.isEmpty || t.runes.length > 3) return false;
   final emojiRange = RegExp(r'^[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}\u{FE00}-\u{FE0F}\u{200D}]+$', unicode: true);
   return emojiRange.hasMatch(t);
+}
+
+List<ChatAlbumMediaItem> _chatBubbleSlides({
+  List<ChatAlbumMediaItem>? albumMedia,
+  List<String>? imageUrls,
+  String? imageUrl,
+  String? videoUrl,
+}) {
+  if (albumMedia != null && albumMedia.isNotEmpty) {
+    return List<ChatAlbumMediaItem>.from(albumMedia);
+  }
+  final fromUrls = <ChatAlbumMediaItem>[
+    if (imageUrls != null)
+      for (final u in imageUrls)
+        if (u.trim().isNotEmpty) ChatAlbumMediaItem(url: u.trim()),
+  ];
+  if (fromUrls.isNotEmpty) return fromUrls;
+  final single = imageUrl?.trim() ?? '';
+  if (single.isNotEmpty) return [ChatAlbumMediaItem(url: single)];
+  final video = videoUrl?.trim() ?? '';
+  if (video.isNotEmpty) return [ChatAlbumMediaItem(url: video, isVideo: true)];
+  return const [];
 }
 
 Widget _bubbleMedia(String url, {required bool sticker, VoidCallback? onTap}) {
@@ -881,12 +903,43 @@ class ChatDocumentBubble extends StatelessWidget {
       openChatImageViewer(context, resolved);
       return;
     }
+    final messenger = ScaffoldMessenger.maybeOf(context);
     try {
       final uri = Uri.parse(resolved);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      final response = await http.get(uri);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw StateError('Download failed (${response.statusCode})');
       }
-    } catch (_) {}
+      final docs = await getApplicationDocumentsDirectory();
+      final folder = Directory('${docs.path}/Downloads');
+      if (!await folder.exists()) {
+        await folder.create(recursive: true);
+      }
+      var safeName = _displayName.replaceAll(RegExp(r'[^\w.\-]+'), '_');
+      if (safeName.isEmpty) safeName = 'document';
+      if (!safeName.contains('.')) {
+        final lower = resolved.split('?').first.toLowerCase();
+        if (lower.endsWith('.pdf')) safeName = '$safeName.pdf';
+      }
+      var file = File('${folder.path}/$safeName');
+      if (await file.exists()) {
+        final stamp = DateTime.now().millisecondsSinceEpoch;
+        final dot = safeName.lastIndexOf('.');
+        final renamed = dot > 0
+            ? '${safeName.substring(0, dot)}_$stamp${safeName.substring(dot)}'
+            : '${safeName}_$stamp';
+        file = File('${folder.path}/$renamed');
+      }
+      await file.writeAsBytes(response.bodyBytes, flush: true);
+      if (!context.mounted) return;
+      messenger?.hideCurrentSnackBar();
+      messenger?.showSnackBar(
+        SnackBar(content: Text('Saved to Files › Xlive › Downloads/${file.uri.pathSegments.last}')),
+      );
+    } catch (_) {
+      if (!context.mounted) return;
+      messenger?.showSnackBar(const SnackBar(content: Text('Could not save file')));
+    }
   }
 
   @override
@@ -1038,23 +1091,12 @@ class SentMessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final slides = <ChatAlbumMediaItem>[
-      if (albumMedia != null)
-        ...albumMedia!
-      else ...[
-        if (imageUrls != null)
-          for (final u in imageUrls!)
-            if (u.trim().isNotEmpty) ChatAlbumMediaItem(url: u.trim())
-        else if (imageUrl != null && imageUrl!.trim().isNotEmpty)
-          ChatAlbumMediaItem(url: imageUrl!.trim()),
-        if ((albumMedia == null || albumMedia!.isEmpty) &&
-            (imageUrls == null || imageUrls!.isEmpty) &&
-            (imageUrl == null || imageUrl!.trim().isEmpty) &&
-            videoUrl != null &&
-            videoUrl!.trim().isNotEmpty)
-          ChatAlbumMediaItem(url: videoUrl!.trim(), isVideo: true),
-      ],
-    ];
+    final slides = _chatBubbleSlides(
+      albumMedia: albumMedia,
+      imageUrls: imageUrls,
+      imageUrl: imageUrl,
+      videoUrl: videoUrl,
+    );
     final hasImage = slides.any((s) => !s.isVideo);
     final hasVideo = slides.any((s) => s.isVideo) || (videoUrl != null && videoUrl!.isNotEmpty && slides.isEmpty);
     final hasAudio = audioUrl != null && audioUrl!.isNotEmpty;
@@ -1142,46 +1184,48 @@ class SentMessageBubble extends StatelessWidget {
               ],
             )
           else if (belowCaption)
-            Container(
-              constraints: BoxConstraints(maxWidth: mediaMaxW),
-              decoration: BoxDecoration(
-                color: ChatTheme.purple,
-                borderRadius: BorderRadius.circular(16).copyWith(bottomRight: const Radius.circular(5)),
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(3, 3, 3, 0),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(13),
-                      child: (slides.length == 1 && slides.first.isVideo)
-                          ? ChatVideoBubble(url: slides.first.url, mine: true)
-                          : ChatBubbleMediaCollage(
-                              items: slides.isNotEmpty
-                                  ? slides
-                                  : [
-                                      if (videoUrl != null && videoUrl!.isNotEmpty)
-                                        ChatAlbumMediaItem(url: videoUrl!, isVideo: true),
-                                    ],
-                              maxWidth: mediaMaxW,
-                              overlayCaption: null,
-                            ),
+            SizedBox(
+              width: mediaMaxW,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: ChatTheme.purple,
+                  borderRadius: BorderRadius.circular(16).copyWith(bottomRight: const Radius.circular(5)),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(3, 3, 3, 0),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(13),
+                        child: (slides.length == 1 && slides.first.isVideo)
+                            ? ChatVideoBubble(url: slides.first.url, mine: true)
+                            : ChatBubbleMediaCollage(
+                                items: slides.isNotEmpty
+                                    ? slides
+                                    : [
+                                        if (videoUrl != null && videoUrl!.isNotEmpty)
+                                          ChatAlbumMediaItem(url: videoUrl!, isVideo: true),
+                                      ],
+                                maxWidth: mediaMaxW,
+                                overlayCaption: null,
+                              ),
+                      ),
                     ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(10, 6, 8, 6),
-                    child: _EmbeddedTextBody(
-                      text: text,
-                      timeLabel: timeLabel,
-                      onAccent: true,
-                      edited: edited,
-                      showReadReceipt: showReadReceipt,
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(10, 6, 8, 6),
+                      child: _EmbeddedTextBody(
+                        text: text,
+                        timeLabel: timeLabel,
+                        onAccent: true,
+                        edited: edited,
+                        showReadReceipt: showReadReceipt,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             )
           else if (slides.length == 1 && slides.first.isVideo && overlayCaption == null)
@@ -1300,23 +1344,12 @@ class ReceivedMessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final slides = <ChatAlbumMediaItem>[
-      if (albumMedia != null)
-        ...albumMedia!
-      else ...[
-        if (imageUrls != null)
-          for (final u in imageUrls!)
-            if (u.trim().isNotEmpty) ChatAlbumMediaItem(url: u.trim())
-        else if (imageUrl != null && imageUrl!.trim().isNotEmpty)
-          ChatAlbumMediaItem(url: imageUrl!.trim()),
-        if ((albumMedia == null || albumMedia!.isEmpty) &&
-            (imageUrls == null || imageUrls!.isEmpty) &&
-            (imageUrl == null || imageUrl!.trim().isEmpty) &&
-            videoUrl != null &&
-            videoUrl!.trim().isNotEmpty)
-          ChatAlbumMediaItem(url: videoUrl!.trim(), isVideo: true),
-      ],
-    ];
+    final slides = _chatBubbleSlides(
+      albumMedia: albumMedia,
+      imageUrls: imageUrls,
+      imageUrl: imageUrl,
+      videoUrl: videoUrl,
+    );
     final hasImage = slides.any((s) => !s.isVideo);
     final hasVideo = slides.any((s) => s.isVideo) || (videoUrl != null && videoUrl!.isNotEmpty && slides.isEmpty);
     final hasAudio = audioUrl != null && audioUrl!.isNotEmpty;
@@ -1405,52 +1438,54 @@ class ReceivedMessageBubble extends StatelessWidget {
                     ],
                   )
                 else if (belowCaption)
-                  Container(
-                    constraints: BoxConstraints(maxWidth: mediaMaxW),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16).copyWith(bottomLeft: const Radius.circular(5)),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.04),
-                          blurRadius: 8,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    clipBehavior: Clip.antiAlias,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(3, 3, 3, 0),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(13),
-                            child: (slides.length == 1 && slides.first.isVideo)
-                                ? ChatVideoBubble(url: slides.first.url, mine: false)
-                                : ChatBubbleMediaCollage(
-                                    items: slides.isNotEmpty
-                                        ? slides
-                                        : [
-                                            if (videoUrl != null && videoUrl!.isNotEmpty)
-                                              ChatAlbumMediaItem(url: videoUrl!, isVideo: true),
-                                          ],
-                                    maxWidth: mediaMaxW,
-                                    overlayCaption: null,
-                                  ),
+                  SizedBox(
+                    width: mediaMaxW,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(16).copyWith(bottomLeft: const Radius.circular(5)),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.04),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
                           ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(10, 6, 8, 6),
-                          child: _EmbeddedTextBody(
-                            text: text,
-                            timeLabel: timeLabel,
-                            onAccent: false,
-                            edited: edited,
+                        ],
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(3, 3, 3, 0),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(13),
+                              child: (slides.length == 1 && slides.first.isVideo)
+                                  ? ChatVideoBubble(url: slides.first.url, mine: false)
+                                  : ChatBubbleMediaCollage(
+                                      items: slides.isNotEmpty
+                                          ? slides
+                                          : [
+                                              if (videoUrl != null && videoUrl!.isNotEmpty)
+                                                ChatAlbumMediaItem(url: videoUrl!, isVideo: true),
+                                            ],
+                                      maxWidth: mediaMaxW,
+                                      overlayCaption: null,
+                                    ),
+                            ),
                           ),
-                        ),
-                      ],
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(10, 6, 8, 6),
+                            child: _EmbeddedTextBody(
+                              text: text,
+                              timeLabel: timeLabel,
+                              onAccent: false,
+                              edited: edited,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   )
                 else if (slides.length == 1 && slides.first.isVideo && overlayCaption == null)

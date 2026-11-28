@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../core/widgets/user_avatar.dart';
@@ -70,29 +72,54 @@ class FollowListScreen extends StatefulWidget {
 
 class _FollowListScreenState extends State<FollowListScreen> {
   final _social = SocialRepository();
+  final _scroll = ScrollController();
   List<XLiveUser> _users = const [];
   bool _loading = true;
+  bool _loadingMore = false;
+  bool _hasMore = true;
+  int _page = 1;
   String? _error;
 
   @override
   void initState() {
     super.initState();
+    _scroll.addListener(_onScroll);
     _load();
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (!_hasMore || _loadingMore || _loading) return;
+    if (!_scroll.hasClients) return;
+    if (_scroll.position.pixels < _scroll.position.maxScrollExtent - 240) return;
+    unawaited(_loadMore());
+  }
+
+  Future<List<XLiveUser>> _fetchPage(int page) {
+    return widget.args.followers
+        ? _social.getFollowers(widget.args.userId, page: page, limit: 20)
+        : _social.getFollowing(widget.args.userId, page: page, limit: 20);
   }
 
   Future<void> _load() async {
     setState(() {
       _loading = true;
       _error = null;
+      _page = 1;
+      _hasMore = true;
     });
     try {
-      final users = widget.args.followers
-          ? await _social.getFollowers(widget.args.userId)
-          : await _social.getFollowing(widget.args.userId);
+      final users = await _fetchPage(1);
       if (!mounted) return;
       setState(() {
         _users = users;
         _loading = false;
+        _hasMore = users.length >= 20;
       });
     } catch (e) {
       if (!mounted) return;
@@ -100,6 +127,27 @@ class _FollowListScreenState extends State<FollowListScreen> {
         _loading = false;
         _error = friendlyApiMessage(e);
       });
+    }
+  }
+
+  Future<void> _loadMore() async {
+    if (_loadingMore || !_hasMore) return;
+    setState(() => _loadingMore = true);
+    final next = _page + 1;
+    try {
+      final users = await _fetchPage(next);
+      if (!mounted) return;
+      final existing = _users.map((u) => u.id).toSet();
+      final merged = [..._users, ...users.where((u) => !existing.contains(u.id))];
+      setState(() {
+        _users = merged;
+        _page = next;
+        _hasMore = users.length >= 20;
+        _loadingMore = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loadingMore = false);
     }
   }
 
@@ -114,14 +162,21 @@ class _FollowListScreenState extends State<FollowListScreen> {
               : _users.isEmpty
                   ? const Center(child: Text('No users yet'))
                   : ListView.separated(
+                      controller: _scroll,
                       padding: const EdgeInsets.symmetric(vertical: 8),
-                      itemCount: _users.length,
+                      itemCount: _users.length + (_loadingMore ? 1 : 0),
                       separatorBuilder: (_, index) => Divider(height: 1, color: Colors.grey.shade200, indent: 72),
                       itemBuilder: (_, i) {
+                        if (i >= _users.length) {
+                          return const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 16),
+                            child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                          );
+                        }
                         final u = _users[i];
                         return ListTile(
                           leading: UserAvatar(radius: 20, imageUrl: u.avatarUrl),
-                          title: Text(u.displayName ?? u.username ?? 'User', style: const TextStyle(fontWeight: FontWeight.w600)),
+                          title: Text(u.effectiveDisplayName, style: const TextStyle(fontWeight: FontWeight.w600)),
                           subtitle: u.username == null ? null : Text('@${u.username}'),
                           trailing: const Icon(Icons.chevron_right_rounded, color: Colors.black38),
                           onTap: () => Navigator.pushNamed(
@@ -256,7 +311,24 @@ class _StreamInvitesScreenState extends State<StreamInvitesScreen> {
       _error = null;
     });
     try {
-      final items = await _streamsRepo.myInvites();
+      var items = await _streamsRepo.myInvites();
+      items = await Future.wait(items.map((invite) async {
+        if (!invite.isPending) return invite;
+        if (invite.isStreamEnded || invite.isStreamLiveOrScheduled) return invite;
+        final streamId = invite.streamId?.trim();
+        if (streamId == null || streamId.isEmpty) {
+          return invite.copyWith(streamStatus: 'ended');
+        }
+        try {
+          final stream = await _streamsRepo.getStream(streamId);
+          final status = (stream.status ?? '').trim();
+          return invite.copyWith(
+            streamStatus: status.isNotEmpty ? status : (stream.isLive ? 'live' : 'ended'),
+          );
+        } catch (_) {
+          return invite.copyWith(streamStatus: 'ended');
+        }
+      }));
       if (!mounted) return;
       setState(() {
         _invites = items;
@@ -329,27 +401,42 @@ class _StreamInvitesScreenState extends State<StreamInvitesScreen> {
                                 Text(invite.scheduleLabel!, style: TextStyle(color: Colors.grey.shade600, fontSize: 13, fontWeight: FontWeight.w600)),
                               ],
                               const SizedBox(height: 14),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: OutlinedButton(onPressed: () => _decline(invite), child: const Text('Decline')),
+                              if (invite.isStreamEnded)
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey.shade200,
+                                    borderRadius: BorderRadius.circular(999),
                                   ),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: DecoratedBox(
-                                      decoration: BoxDecoration(
-                                        gradient: const LinearGradient(colors: [_purple, _sky]),
-                                        borderRadius: BorderRadius.circular(999),
-                                      ),
-                                      child: ElevatedButton(
-                                        style: ElevatedButton.styleFrom(backgroundColor: Colors.transparent, shadowColor: Colors.transparent),
-                                        onPressed: () => _accept(invite),
-                                        child: const Text('Answer', style: TextStyle(color: Colors.white)),
+                                  child: const Text(
+                                    'Live has ended',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(fontWeight: FontWeight.w700, color: _black),
+                                  ),
+                                )
+                              else
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: OutlinedButton(onPressed: () => _decline(invite), child: const Text('Decline')),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: DecoratedBox(
+                                        decoration: BoxDecoration(
+                                          gradient: const LinearGradient(colors: [_purple, _sky]),
+                                          borderRadius: BorderRadius.circular(999),
+                                        ),
+                                        child: ElevatedButton(
+                                          style: ElevatedButton.styleFrom(backgroundColor: Colors.transparent, shadowColor: Colors.transparent),
+                                          onPressed: () => _accept(invite),
+                                          child: const Text('Answer', style: TextStyle(color: Colors.white)),
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                ],
-                              ),
+                                  ],
+                                ),
                             ],
                           ),
                         );

@@ -432,17 +432,19 @@ class _ExploreAllBodyState extends State<_ExploreAllBody> {
         try {
           final feed = await _feedRepo.followersFeed(limit: 8);
           if (!mounted) return;
+          final deduped = <String, XLiveUser>{};
+          for (final f in feed) {
+            final id = f.creatorId?.trim();
+            if (id == null || id.isEmpty) continue;
+            final name = f.creatorName?.trim();
+            if (name == null || name.isEmpty) continue;
+            deduped.putIfAbsent(
+              id,
+              () => XLiveUser(id: id, displayName: name, avatarUrl: f.creatorAvatarUrl),
+            );
+          }
           setState(() {
-            _people = feed
-                .where((f) => f.creatorId != null && f.creatorId!.isNotEmpty)
-                .map(
-                  (f) => XLiveUser(
-                    id: f.creatorId!,
-                    displayName: f.creatorName,
-                    avatarUrl: f.creatorAvatarUrl,
-                  ),
-                )
-                .toList();
+            _people = deduped.values.toList();
             _loadingPeople = false;
           });
           return;
@@ -707,10 +709,18 @@ class _ExplorePeopleListBodyState extends State<_ExplorePeopleListBody> {
       if (AuthSession.instance.isSignedIn) {
         try {
           final feed = await _feedRepo.followersFeed(limit: 30);
-          people = feed
-              .where((f) => f.creatorId != null && f.creatorId!.isNotEmpty)
-              .map((f) => XLiveUser(id: f.creatorId!, displayName: f.creatorName, avatarUrl: f.creatorAvatarUrl))
-              .toList();
+          final deduped = <String, XLiveUser>{};
+          for (final f in feed) {
+            final id = f.creatorId?.trim();
+            if (id == null || id.isEmpty) continue;
+            final name = f.creatorName?.trim();
+            if (name == null || name.isEmpty) continue;
+            deduped.putIfAbsent(
+              id,
+              () => XLiveUser(id: id, displayName: name, avatarUrl: f.creatorAvatarUrl),
+            );
+          }
+          people = deduped.values.toList();
           if (people.isNotEmpty) {
             if (!mounted) return;
             setState(() {

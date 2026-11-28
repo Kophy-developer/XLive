@@ -41,3 +41,6 @@ apps/mobile/**/*.symbols
 apps/mobile/**/*.map.json
 
 .review/
+
+# FVM Version Cache
+.fvm/

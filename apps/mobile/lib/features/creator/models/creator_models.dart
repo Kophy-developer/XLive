@@ -4,11 +4,13 @@ class CreatorEarnings {
   const CreatorEarnings({
     this.balance = 0,
     this.totalWithdrawn = 0,
+    this.totalEarnedInRange = 0,
     this.breakdown = const {},
   });
 
   final double balance;
   final double totalWithdrawn;
+  final double totalEarnedInRange;
   final Map<String, double> breakdown;
 
   factory CreatorEarnings.fromJson(Map<String, dynamic> json) {
@@ -24,12 +26,13 @@ class CreatorEarnings {
         if (item is! Map) continue;
         final map = Map<String, dynamic>.from(item);
         final label = ApiJson.pickString(map, ['label', 'name', 'source', 'type']) ?? 'other';
-        breakdown[label] = ApiJson.pickInt(map, ['amount', 'value', 'total']).toDouble();
+        breakdown[label] = _doubleValue(map['amount'] ?? map['value'] ?? map['total']);
       }
     }
     return CreatorEarnings(
       balance: _doubleValue(data['balance'] ?? data['availableBalance'] ?? data['totalBalance']),
       totalWithdrawn: _doubleValue(data['totalWithdrawn'] ?? data['withdrawnToDate'] ?? data['lifetimeWithdrawn']),
+      totalEarnedInRange: _doubleValue(data['totalEarnedInRange'] ?? data['earnedInRange'] ?? data['periodEarnings']),
       breakdown: breakdown,
     );
   }
@@ -80,20 +83,29 @@ class CreatorAnalytics {
 
   final Map<String, num> metrics;
 
-  num getMetric(String key) {
+  num exact(String key) {
+    final direct = metrics[key];
+    if (direct != null) return direct;
+    final lower = key.toLowerCase();
     for (final entry in metrics.entries) {
-      if (entry.key.toLowerCase().contains(key.toLowerCase())) return entry.value;
+      if (entry.key.toLowerCase() == lower) return entry.value;
     }
     return 0;
   }
 
-  num get clipsMetric {
-    for (final key in const ['clips', 'clip', 'clipviews', 'clipcount', 'clipsviews']) {
-      final value = getMetric(key);
-      if (value != 0) return value;
-    }
-    return 0;
-  }
+  num getMetric(String key) => exact(key);
+
+  num get likes => exact('likes');
+  num get comments => exact('comments');
+  num get shares => exact('shares');
+  num get profileViews => exact('profileViews');
+  num get postViews => exact('postViews');
+  num get clipViews => exact('clipViews');
+  num get liveStreams => exact('liveStreams');
+  num get streamJoins => exact('streamJoins');
+  num get watchTimeSeconds => exact('watchTimeSeconds');
+  num get giftRevenue => exact('giftRevenue');
+  num get clipsMetric => clipViews != 0 ? clipViews : exact('clips');
 
   factory CreatorAnalytics.fromJson(Map<String, dynamic> json) {
     final data = ApiJson.dataMap(json);

@@ -84,12 +84,48 @@ class SocialRepository {
     return out;
   }
 
+  static final Map<String, int> _commentCountCache = {};
+
+  static String _commentCountKey(String targetType, String targetId) => '$targetType:$targetId';
+
+  static void rememberCommentCount({
+    required String targetType,
+    required String targetId,
+    required int count,
+  }) {
+    _commentCountCache[_commentCountKey(targetType, targetId)] = count;
+  }
+
+  static int? rememberedCommentCount({
+    required String targetType,
+    required String targetId,
+  }) {
+    return _commentCountCache[_commentCountKey(targetType, targetId)];
+  }
+
   Future<int> getCommentCount({
     required String targetType,
     required String targetId,
   }) async {
-    final comments = await listComments(targetType: targetType, targetId: targetId, page: 1, limit: 80);
-    return comments.where((c) => !isReactionComment(c.content)).length;
+    final seen = <String>{};
+    final all = <CommentItem>[];
+    var page = 1;
+    const limit = 80;
+    while (page <= 40) {
+      final batch = await listComments(targetType: targetType, targetId: targetId, page: page, limit: limit);
+      var added = 0;
+      for (final comment in batch) {
+        if (seen.contains(comment.id)) continue;
+        seen.add(comment.id);
+        all.add(comment);
+        added += 1;
+      }
+      if (added == 0 || batch.length < limit) break;
+      page += 1;
+    }
+    final count = all.where((c) => !isReactionComment(c.content)).length;
+    rememberCommentCount(targetType: targetType, targetId: targetId, count: count);
+    return count;
   }
 
   Future<CommentItem> createComment({

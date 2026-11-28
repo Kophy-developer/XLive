@@ -80,7 +80,6 @@ class XLiveApp extends StatelessWidget {
             brightness: Brightness.light,
             scaffoldBackgroundColor: const Color(0xFFFFFFFF),
             colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF8A2DDC)),
-            fontFamily: 'SF Pro Display',
           ),
           builder: (context, child) {
             return StreamInviteToastHost(
@@ -455,7 +454,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
   Future<void> _enrichBatch(List<FeedItem> batch) async {
     if (batch.isEmpty) return;
     try {
-      final enriched = await _feedRepo.enrichCreators(batch);
+      final enriched = await _feedRepo.enrichFeedItems(batch);
       if (!mounted) return;
       final byId = {for (final item in enriched) item.id: item};
       setState(() {
@@ -807,7 +806,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
                               const Icon(Icons.monetization_on_rounded, size: 18, color: Colors.amber),
                               const SizedBox(width: 4),
                               Text(
-                                '${session.walletBalance ?? '900'}',
+                                '${session.walletBalance ?? '—'}',
                                 style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
                               ),
                             ]),

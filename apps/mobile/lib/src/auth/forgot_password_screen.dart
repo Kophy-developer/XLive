@@ -17,7 +17,6 @@ class ForgotPasswordScreen extends StatefulWidget {
 class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   final _emailCtrl = TextEditingController();
   bool _submitting = false;
-  String? _resetUserId;
 
   @override
   void dispose() {
@@ -33,14 +32,13 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     }
     setState(() => _submitting = true);
     try {
-      final json = await AuthSession.instance.authRepository.requestPasswordResetWithMeta(email);
-      _resetUserId = json;
+      await AuthSession.instance.authRepository.forgotPassword(email);
       if (!mounted) return;
       Navigator.push(
         context,
         MaterialPageRoute<void>(
           builder: (_) => RegisterVerifyScreen(
-            draft: RegisterDraft(email: email, userId: _resetUserId),
+            draft: RegisterDraft(email: email),
             destinationLine: email,
             emailHighlight: email,
             highlightWholeLine: false,
@@ -54,7 +52,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                 ),
               );
             },
-            onResend: () => AuthSession.instance.authRepository.requestPasswordReset(email),
+            onResend: () => AuthSession.instance.authRepository.forgotPassword(email),
           ),
         ),
       );

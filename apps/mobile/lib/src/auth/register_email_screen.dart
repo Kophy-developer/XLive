@@ -63,13 +63,13 @@ class _RegisterEmailScreenState extends State<RegisterEmailScreen> {
     final draft = widget.draft;
     final password = draft.password;
     if (password == null || validateAuthPassword(password) != null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Password must be at least 8 characters.')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(validateAuthPassword(password ?? '') ?? '')));
       return;
     }
 
     setState(() => _submitting = true);
     try {
-      final userId = await AuthSession.instance.authRepository.register(
+      await AuthSession.instance.authRepository.register(
         email: email,
         firstName: draft.firstName ?? '',
         lastName: draft.lastName ?? '',
@@ -77,9 +77,8 @@ class _RegisterEmailScreenState extends State<RegisterEmailScreen> {
         phone: draft.phoneE164,
         password: password,
       );
-      await AuthSession.instance.authRepository.requestVerificationCode(userId: userId, type: 'email');
       if (!mounted) return;
-      final nextDraft = draft.copyWith(email: email, userId: userId);
+      final nextDraft = draft.copyWith(email: email);
       Navigator.push(
         context,
         MaterialPageRoute<void>(
@@ -93,11 +92,10 @@ class _RegisterEmailScreenState extends State<RegisterEmailScreen> {
       );
     } catch (e) {
       if (!mounted) return;
-      if (isAuthAccountExistsError(e)) {
-        await _promptExistingAccount(email);
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(authErrorMessage(e))));
+      // Shows the server's message, e.g. a duplicate username or email, or its password rule.
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(serverPasswordError(e) ?? authErrorMessage(e))),
+      );
     } finally {
       if (mounted) setState(() => _submitting = false);
     }

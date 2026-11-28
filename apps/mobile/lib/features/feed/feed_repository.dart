@@ -68,6 +68,11 @@ class FeedRepository {
 
   Future<List<FeedItem>> enrichCreators(List<FeedItem> items) => _enrichCreators(items);
 
+  Future<List<FeedItem>> enrichFeedItems(List<FeedItem> items) async {
+    final withCreators = await _enrichCreators(items);
+    return _enrichCommentCounts(withCreators);
+  }
+
   Future<List<FeedItem>> _enrichCreators(List<FeedItem> items) async {
     final social = SocialRepository(client: _client);
     final ids = items
@@ -93,6 +98,39 @@ class FeedRepository {
     }).toList();
   }
 
+  Future<List<FeedItem>> _enrichCommentCounts(List<FeedItem> items) async {
+    if (items.isEmpty) return items;
+    final social = SocialRepository(client: _client);
+    final pending = items.where((item) {
+      if (item.id.isEmpty || item.type == FeedContentType.stream) return false;
+      return SocialRepository.rememberedCommentCount(
+            targetType: item.targetType,
+            targetId: item.id,
+          ) ==
+          null;
+    }).toList();
+
+    const concurrency = 5;
+    for (var i = 0; i < pending.length; i += concurrency) {
+      final chunk = pending.sublist(i, (i + concurrency).clamp(0, pending.length));
+      await Future.wait(chunk.map((item) async {
+        try {
+          await social.getCommentCount(targetType: item.targetType, targetId: item.id);
+        } catch (_) {}
+      }));
+    }
+
+    return items.map((item) {
+      if (item.id.isEmpty || item.type == FeedContentType.stream) return item;
+      final remembered = SocialRepository.rememberedCommentCount(
+        targetType: item.targetType,
+        targetId: item.id,
+      );
+      if (remembered == null) return item;
+      return item.copyWith(commentCount: remembered);
+    }).toList();
+  }
+
   Future<List<FeedItem>> getForYou({int page = 1, int limit = 20}) async {
     final json = await _client.apiGet(
       '/api/x-live/feed/for-you',
@@ -105,6 +143,7 @@ class FeedRepository {
       final mine = await _ownContent();
       items = _mergeFresh(items, [...latest, ...mine]);
     }
+    items = await enrichFeedItems(items);
     _cacheFirstPage('for-you', page, items);
     return items;
   }
@@ -178,6 +217,7 @@ class FeedRepository {
     if (page == 1 && items.isEmpty) {
       items = await _followingFromPeople();
     }
+    items = await enrichFeedItems(items);
     _cacheFirstPage('following', page, items);
     return items;
   }
@@ -188,7 +228,7 @@ class FeedRepository {
       query: {'page': '$page', 'limit': '$limit'},
       auth: false,
     );
-    final items = _parseFeed(json);
+    final items = await enrichFeedItems(_parseFeed(json));
     _cacheFirstPage('clips', page, items);
     return items;
   }
@@ -229,7 +269,8 @@ class FeedRepository {
       query: {'page': '$page', 'limit': '$limit'},
       auth: false,
     );
-    return ApiJson.listItems(json).map(FeedItem.fromJson).where((item) => item.id.isNotEmpty).toList();
+    final items = ApiJson.listItems(json).map(FeedItem.fromJson).where((item) => item.id.isNotEmpty).toList();
+    return enrichFeedItems(items);
   }
 
   Future<List<FeedItem>> followersFeed({int page = 1, int limit = 20}) async {
@@ -240,7 +281,8 @@ class FeedRepository {
       '/api/x-live/feed/followers',
       query: {'page': '$page', 'limit': '$limit'},
     );
-    return ApiJson.listItems(json).map(FeedItem.fromJson).where((item) => item.id.isNotEmpty).toList();
+    final items = ApiJson.listItems(json).map(FeedItem.fromJson).where((item) => item.id.isNotEmpty).toList();
+    return enrichFeedItems(items);
   }
 
   Future<List<FeedItem>> categoryFeed(String categorySlug, {int page = 1, int limit = 20}) =>

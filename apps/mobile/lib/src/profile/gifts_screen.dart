@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/widgets/coin_icon.dart';
 import '../../core/widgets/user_avatar.dart';
 import '../../features/gifts/gifts_repository.dart';
 import '../../features/gifts/models/gift_models.dart';
@@ -171,14 +172,14 @@ class _SummaryCard extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              const Icon(Icons.diamond_rounded, color: Colors.white, size: 26),
+              const CoinIcon(size: 26, color: Color(0xFFFFC107)),
               const SizedBox(width: 8),
               Text('$totalValue', style: const TextStyle(color: Colors.white, fontSize: 34, fontWeight: FontWeight.w900, height: 1)),
             ],
           ),
           const SizedBox(height: 4),
           Text(
-            totalCash > 0 ? '≈ $currency ${totalCash.toStringAsFixed(2)}' : 'Diamonds earned',
+            totalCash > 0 ? '≈ $currency ${totalCash.toStringAsFixed(2)}' : 'Coins earned',
             style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 14),
@@ -260,7 +261,7 @@ class _GiftRow extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    const Icon(Icons.diamond_rounded, size: 14, color: _gradStart),
+                    const CoinIcon(size: 14, color: Color(0xFFFFB300)),
                     const SizedBox(width: 3),
                     Text('${gift.value}', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: _black)),
                   ],

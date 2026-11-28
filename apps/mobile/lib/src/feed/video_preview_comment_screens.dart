@@ -22,6 +22,7 @@ import '../../core/social/comment_emoji.dart';
 import '../../core/utils/relative_time.dart';
 import '../../core/widgets/user_avatar.dart';
 import '../../features/social/models/social_models.dart';
+import '../../features/feed/feed_album.dart';
 import '../../features/feed/feed_repository.dart';
 import '../../features/feed/models/feed_models.dart';
 import '../../features/insights/insights_repository.dart';
@@ -54,6 +55,8 @@ class VideoClipPreviewArgs {
     this.createdAt,
     this.unlockPrice = 0,
     this.locked = false,
+    this.saveTargetIds = const [],
+    this.isAlbum = false,
   });
 
   factory VideoClipPreviewArgs.fromFeedItem(FeedItem item) {
@@ -78,6 +81,8 @@ class VideoClipPreviewArgs {
       createdAt: item.createdAt,
       unlockPrice: item.unlockPrice,
       locked: item.isLocked,
+      saveTargetIds: feedSaveTargetIds(item),
+      isAlbum: item.isAlbum,
     );
   }
 
@@ -96,8 +101,17 @@ class VideoClipPreviewArgs {
   final DateTime? createdAt;
   final int unlockPrice;
   final bool locked;
+  final List<String> saveTargetIds;
+  final bool isAlbum;
 
   bool get hasTarget => targetId != null && targetId!.isNotEmpty;
+
+  List<String> get resolvedSaveTargetIds {
+    if (saveTargetIds.isNotEmpty) return saveTargetIds;
+    final id = targetId?.trim();
+    if (id == null || id.isEmpty) return const [];
+    return [id];
+  }
 
   VideoClipPreviewArgs copyWith({
     String? targetType,
@@ -115,6 +129,8 @@ class VideoClipPreviewArgs {
     DateTime? createdAt,
     int? unlockPrice,
     bool? locked,
+    List<String>? saveTargetIds,
+    bool? isAlbum,
     bool clearMediaUrl = false,
   }) {
     return VideoClipPreviewArgs(
@@ -133,6 +149,8 @@ class VideoClipPreviewArgs {
       createdAt: createdAt ?? this.createdAt,
       unlockPrice: unlockPrice ?? this.unlockPrice,
       locked: locked ?? this.locked,
+      saveTargetIds: saveTargetIds ?? this.saveTargetIds,
+      isAlbum: isAlbum ?? this.isAlbum,
     );
   }
 }
@@ -194,6 +212,7 @@ class _VideoClipPreviewScreenState extends State<VideoClipPreviewScreen> with Wi
   bool _followingCreator = false;
   bool _loadingDetail = false;
   bool _locked = false;
+  bool _savingBookmark = false;
   bool _unlocking = false;
   int _soldCount = 0;
   bool _isArchived = false;
@@ -1037,8 +1056,8 @@ class _VideoClipPreviewScreenState extends State<VideoClipPreviewScreen> with Wi
   }
 
   Future<void> _toggleSave() async {
-    final id = widget.args.targetId;
-    if (id == null || id.isEmpty) return;
+    final ids = widget.args.resolvedSaveTargetIds;
+    if (ids.isEmpty || _savingBookmark) return;
     if (!AuthSession.instance.isSignedIn) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sign in to save media.')));
       return;
@@ -1047,9 +1066,20 @@ class _VideoClipPreviewScreenState extends State<VideoClipPreviewScreen> with Wi
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Unlock this content before saving.')));
       return;
     }
-    final type = widget.args.targetType ?? 'video';
+    final type = (widget.args.targetType ?? 'video').trim().toLowerCase();
+    if (type == 'clip' || type == 'stream') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Only posts and videos can be saved.')),
+      );
+      return;
+    }
+    setState(() => _savingBookmark = true);
     try {
-      final saved = await SavedMediaStore.instance.toggle(targetType: type, targetId: id, canView: true);
+      final saved = await SavedMediaStore.instance.toggleAll(
+        targetType: type,
+        targetIds: ids,
+        canView: true,
+      );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(saved ? 'Saved' : 'Removed from Saved')),
@@ -1058,13 +1088,13 @@ class _VideoClipPreviewScreenState extends State<VideoClipPreviewScreen> with Wi
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(friendlyApiMessage(e))));
+    } finally {
+      if (mounted) setState(() => _savingBookmark = false);
     }
   }
 
   void _openMoreMenu() {
-    final id = widget.args.targetId ?? '';
-    final type = widget.args.targetType ?? 'video';
-    final isSaved = id.isNotEmpty && SavedMediaStore.instance.isSaved(type, id);
+    final isSaved = SavedMediaStore.instance.isSavedAll(widget.args.resolvedSaveTargetIds);
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.white,

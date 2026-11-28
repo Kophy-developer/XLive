@@ -91,186 +91,41 @@ class AuthSession extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> signInWithCredentials({
-    required String identifier,
-    required String password,
-    String? email,
-    String? phone,
-    String? username,
-  }) async {
+  /// Signs in with an email, username or phone number and password via
+  /// `POST /auth/login`. Throws [EmailNotVerifiedException] on 403 so the UI can
+  /// route an email login to the verification screen.
+  Future<void> signInWithCredentials({required String identifier, required String password}) async {
     _setBusy(true);
     try {
-      final loginIdentifier = identifier.trim();
-      final resolvedUsername = username?.trim();
-      var resolvedEmail = email ?? (loginIdentifier.contains('@') ? loginIdentifier : null);
-      final resolvedPhone = phone ??
-          (!loginIdentifier.contains('@') && RegExp(r'^\+?\d{7,}$').hasMatch(loginIdentifier)
-              ? loginIdentifier
-              : null);
-      final isUsernameLogin = resolvedEmail == null &&
-          resolvedPhone == null &&
-          !loginIdentifier.contains('@');
-
-      late final AuthLoginResult login;
-
-      if (isUsernameLogin) {
-        final usernameKey = resolvedUsername ?? loginIdentifier;
-        final cachedEmail = await _client.sessionStore.readLoginAlias(usernameKey);
-        if (cachedEmail != null && cachedEmail.isNotEmpty) {
-          try {
-            login = await _auth.login(identifier: cachedEmail, password: password);
-            resolvedEmail = cachedEmail;
-          } on ApiException catch (cachedError) {
-            final emailFromUsername = await _auth.resolveEmailForUsername(usernameKey);
-            if (emailFromUsername == null || emailFromUsername.isEmpty) rethrow;
-            if (emailFromUsername == cachedEmail) rethrow;
-            resolvedEmail = emailFromUsername;
-            await _client.sessionStore.writeLoginAlias(usernameKey, emailFromUsername);
-            try {
-              login = await _auth.login(identifier: emailFromUsername, password: password);
-            } on ApiException {
-              throw cachedError;
-            }
-          }
-        } else {
-          final emailFromUsername = await _auth.resolveEmailForUsername(usernameKey);
-          if (emailFromUsername != null && emailFromUsername.isNotEmpty) {
-            resolvedEmail = emailFromUsername;
-            await _client.sessionStore.writeLoginAlias(usernameKey, emailFromUsername);
-            login = await _auth.login(identifier: emailFromUsername, password: password);
-          } else {
-            try {
-              login = await _auth.login(identifier: loginIdentifier, password: password);
-            } on ApiException catch (e) {
-              throw ApiException(
-                'Username not found. Try signing in with your email.',
-                statusCode: e.statusCode,
-              );
-            }
-          }
-        }
-        if (resolvedEmail != null && resolvedEmail.isNotEmpty) {
-          unawaited(_client.sessionStore.writeLoginAlias(usernameKey, resolvedEmail));
-        }
-      } else {
-        login = await _auth.login(identifier: loginIdentifier, password: password);
-      }
-
-      if (login.needsVerification) {
-        throw VerificationRequiredException(
-          userId: login.userId,
-          identifier: resolvedEmail ?? loginIdentifier,
-          verificationType: resolvedEmail != null ? 'email' : 'phone',
-          password: password,
-          email: resolvedEmail,
-          phone: resolvedPhone,
-          username: resolvedUsername ?? (!loginIdentifier.contains('@') ? loginIdentifier : null),
-        );
-      }
-      await _finishBridgeSignIn(
-        identifier: resolvedEmail ?? loginIdentifier,
-        email: resolvedEmail,
-        phone: resolvedPhone,
-        username: resolvedUsername ?? (!loginIdentifier.contains('@') && resolvedPhone == null ? loginIdentifier : null),
-        authUserId: login.userId,
-      );
+      await _finishTokenSignIn(await _auth.login(identifier: identifier, password: password));
     } finally {
       _setBusy(false);
     }
   }
 
-  Future<void> signInAfterRegistration({
+  /// Verifies the account email with the 6-digit code (`POST /auth/verify-email`)
+  /// and signs in with the returned JWT. Sets [displayName] on a fresh profile.
+  Future<void> verifyEmailAndSignIn({
     required String email,
-    required String password,
-    required String username,
+    required String code,
     String? displayName,
   }) async {
     _setBusy(true);
     try {
-      final login = await _auth.login(identifier: email, password: password);
-      if (login.needsVerification) {
-        throw VerificationRequiredException(
-          userId: login.userId,
-          identifier: email,
-          verificationType: 'email',
-          password: password,
-          email: email,
-          username: username,
-        );
-      }
-      await _finishBridgeSignIn(
-        identifier: email,
-        email: email,
-        username: username,
-        authUserId: login.userId,
-      );
+      await _finishTokenSignIn(await _auth.verifyEmail(email: email, code: code));
       final name = displayName?.trim();
-      if (name != null && name.isNotEmpty) {
-        final currentName = _user?.displayName?.trim();
-        if (currentName == null || currentName.isEmpty) {
-          _user = await _users.updateMe(displayName: name);
-          notifyListeners();
-        }
+      if (name != null && name.isNotEmpty && (_user?.displayName?.trim() ?? '').isEmpty) {
+        _user = await _users.updateMe(displayName: name);
+        notifyListeners();
       }
     } finally {
       _setBusy(false);
     }
   }
 
-  Future<void> signInAfterVerifyCode({
-    required String userId,
-    required String code,
-    required String verificationType,
-    required String identifier,
-    required String password,
-    String? email,
-    String? phone,
-    String? username,
-  }) async {
-    _setBusy(true);
-    try {
-      await _auth.verifyCode(userId: userId, code: code, type: verificationType);
-      final login = await _auth.login(identifier: identifier, password: password);
-      if (login.needsVerification) {
-        throw ApiException('Account still needs verification');
-      }
-      await _finishBridgeSignIn(
-        identifier: identifier,
-        email: email ?? (identifier.contains('@') ? identifier : null),
-        phone: phone ?? (identifier.contains('@') ? null : identifier),
-        username: username,
-        authUserId: login.userId,
-      );
-    } finally {
-      _setBusy(false);
-    }
-  }
-
-  Future<void> _finishBridgeSignIn({
-    required String identifier,
-    String? email,
-    String? phone,
-    String? username,
-    String? authUserId,
-  }) async {
-    final bridgeIdentifier = (username ?? email ?? phone ?? identifier).trim();
-    final bridge = await _auth.generateBridgeToken(
-      identifier: bridgeIdentifier,
-      email: email ?? (identifier.contains('@') ? identifier : null),
-      phone: phone ?? (identifier.contains('@') ? null : (RegExp(r'^\+?\d{7,}$').hasMatch(identifier) ? identifier : null)),
-      username: username ?? (!identifier.contains('@') && !RegExp(r'^\+?\d{7,}$').hasMatch(identifier) ? identifier : null),
-      userId: authUserId,
-    );
-    await _persistSession(
-      jwt: bridge.token,
-      userId: bridge.userId,
-      identifier: identifier,
-    );
-    if (bridge.user != null && bridge.user!.id.isNotEmpty) {
-      _user = bridge.user;
-    } else {
-      _user = await _users.getMe();
-    }
+  Future<void> _finishTokenSignIn(AuthTokenResult result) async {
+    await _persistSession(jwt: result.token, userId: result.userId, identifier: result.identifier);
+    _user = result.user;
     notifyListeners();
     unawaited(_hydrateSessionInBackground());
   }
@@ -293,32 +148,6 @@ class AuthSession extends ChangeNotifier {
         } catch (_) {}
       }(),
     ]);
-  }
-
-  Future<void> signInAfterRegister({
-    required String identifier,
-    required String password,
-    required String userId,
-    String? email,
-    String? phone,
-    String? username,
-  }) async {
-    final resolvedEmail = email ?? (identifier.contains('@') ? identifier : null);
-    if (resolvedEmail != null && username != null && username.isNotEmpty) {
-      await signInAfterRegistration(
-        email: resolvedEmail,
-        password: password,
-        username: username,
-      );
-      return;
-    }
-    await signInWithCredentials(
-      identifier: identifier,
-      password: password,
-      email: email,
-      phone: phone,
-      username: username,
-    );
   }
 
   Future<void> refreshProfile() async {
@@ -424,10 +253,11 @@ class AuthSession extends ChangeNotifier {
     }
   }
 
-  Future<void> changePassword(String newPassword) async {
+  /// Changes the signed-in user's password via `POST /auth/change-password`.
+  Future<void> changePassword({required String currentPassword, required String newPassword}) async {
     _setBusy(true);
     try {
-      await _users.changePassword(newPassword);
+      await _auth.changePassword(currentPassword: currentPassword, newPassword: newPassword);
     } finally {
       _setBusy(false);
     }
@@ -496,17 +326,32 @@ String authErrorMessage(Object error) {
   return error.toString();
 }
 
-bool isAuthAccountExistsError(Object error) {
-  if (error is ApiException) {
-    if (error.statusCode == 409) return true;
-    return error.message.toLowerCase().contains('already exist');
+/// Backend password rule (POST /auth/create and /auth/reset-password validation).
+const authPasswordMinLength = 8;
+
+const authPasswordMismatchMessage = "Passwords don't match.";
+
+/// Says exactly what to fix when [password] breaks the backend rule, else null.
+String? validateAuthPassword(String password) {
+  if (password.isEmpty) return 'Enter a password of at least $authPasswordMinLength characters.';
+  final missing = authPasswordMinLength - password.length;
+  if (missing > 0) {
+    return 'Password must be at least $authPasswordMinLength characters. Add $missing more.';
   }
-  return false;
+  return null;
 }
 
-String? validateAuthPassword(String password) {
-  if (password.length < 8) return 'Password must be at least 8 characters.';
-  if (password.length > 128) return 'Password must be 128 characters or fewer.';
+/// Password text from a 400 validation error: `error.password` on /auth/create,
+/// `error[""]` (e.g. "newPassword must be at least 8 characters") on reset/change.
+String? serverPasswordError(Object error) {
+  if (error is! ApiException) return null;
+  final details = error.details;
+  final fields = details is Map ? details['error'] : null;
+  if (fields is! Map) return null;
+  for (final key in ['password', '']) {
+    final value = fields[key];
+    if (value is String && value.contains('assword')) return value;
+  }
   return null;
 }
 
@@ -530,5 +375,23 @@ String mapGenderFromApi(String? gender) {
 }
 
 String mapLanguageToApi(String uiLanguage) {
-  return uiLanguage.toLowerCase().startsWith('eng') ? 'en' : 'en';
+  final value = uiLanguage.trim().toLowerCase();
+  if (value.startsWith('span') || value == 'es') return 'es';
+  if (value.startsWith('fren') || value == 'fr') return 'fr';
+  if (value.startsWith('mand') || value.startsWith('chin') || value == 'zh') return 'zh';
+  return 'en';
+}
+
+String mapLanguageFromApi(String? code) {
+  switch ((code ?? '').trim().toLowerCase().split('-').first) {
+    case 'es':
+      return 'Spanish';
+    case 'fr':
+      return 'French';
+    case 'zh':
+      return 'Mandarin';
+    case 'en':
+    default:
+      return 'English';
+  }
 }

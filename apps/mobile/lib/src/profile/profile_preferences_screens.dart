@@ -256,7 +256,6 @@ class GeneralPreferenceScreen extends StatefulWidget {
 
 class _GeneralPreferenceScreenState extends State<GeneralPreferenceScreen> {
   bool _discoverability = true;
-  bool _showAdult = false;
   bool _loading = true;
 
   @override
@@ -270,7 +269,6 @@ class _GeneralPreferenceScreenState extends State<GeneralPreferenceScreen> {
     if (settings != null) {
       setState(() {
         _discoverability = settings.discoverable;
-        _showAdult = settings.showAdultContent;
         _loading = false;
       });
       return;
@@ -280,7 +278,6 @@ class _GeneralPreferenceScreenState extends State<GeneralPreferenceScreen> {
       if (!mounted) return;
       setState(() {
         _discoverability = loaded.discoverable;
-        _showAdult = loaded.showAdultContent;
         _loading = false;
       });
     } catch (_) {
@@ -288,11 +285,10 @@ class _GeneralPreferenceScreenState extends State<GeneralPreferenceScreen> {
     }
   }
 
-  Future<void> _patchSettings({bool? discoverable, bool? showAdultContent}) async {
+  Future<void> _patchSettings({bool? discoverable}) async {
     final current = AuthSession.instance.settings ?? AppSettings();
     final next = current.copyWith(
       discoverable: discoverable ?? _discoverability,
-      showAdultContent: showAdultContent ?? _showAdult,
     );
     try {
       await AuthSession.instance.saveSettings(next);
@@ -319,16 +315,6 @@ class _GeneralPreferenceScreenState extends State<GeneralPreferenceScreen> {
             onChanged: (v) {
               setState(() => _discoverability = v);
               _patchSettings(discoverable: v);
-            },
-          ),
-          const SizedBox(height: 8),
-          _PrefSwitchRow(
-            title: 'Show 18+ Content',
-            subtitle: 'Do not hide media that contains content suitable only for adults',
-            value: _showAdult,
-            onChanged: (v) {
-              setState(() => _showAdult = v);
-              _patchSettings(showAdultContent: v);
             },
           ),
           const SizedBox(height: 16),

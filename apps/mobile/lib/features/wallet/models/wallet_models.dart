@@ -36,12 +36,23 @@ class WalletTransaction {
   final String? description;
   final DateTime? createdAt;
 
+  bool get isCredit {
+    final raw = (type ?? '').toLowerCase();
+    return raw.contains('credit') || raw.contains('fund') || raw.contains('deposit') || raw.contains('topup') || raw.contains('top_up');
+  }
+
+  String get displayLabel {
+    final desc = description?.trim();
+    if (desc != null && desc.isNotEmpty) return desc;
+    return isCredit ? 'Wallet Top up' : 'Payment';
+  }
+
   factory WalletTransaction.fromJson(Map<String, dynamic> json) {
     return WalletTransaction(
       id: ApiJson.pickString(json, ['id', '_id']) ?? '',
-      type: ApiJson.pickString(json, ['type', 'kind']),
+      type: ApiJson.pickString(json, ['type', 'kind', 'action']),
       amount: ApiJson.pickInt(json, ['amount', 'coins', 'value']),
-      description: ApiJson.pickString(json, ['description', 'label', 'note']),
+      description: ApiJson.pickString(json, ['description', 'label', 'note', 'reason']),
       createdAt: DateTime.tryParse(ApiJson.pickString(json, ['createdAt', 'timestamp']) ?? ''),
     );
   }

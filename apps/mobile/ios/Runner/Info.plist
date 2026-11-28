@@ -55,6 +55,10 @@
 	<string>Xlive uses speech recognition for Live AI Translator captions during streams.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Xlive needs photo library access to upload photos and videos.</string>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UIBackgroundModes</key>

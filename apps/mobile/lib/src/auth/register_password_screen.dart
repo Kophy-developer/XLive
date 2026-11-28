@@ -17,7 +17,13 @@ class RegisterPasswordScreen extends StatefulWidget {
 
 class _RegisterPasswordScreenState extends State<RegisterPasswordScreen> {
   bool _obscure = true;
+  bool _showErrors = false;
   final _passwordCtrl = TextEditingController();
+
+  String? get _passwordError {
+    final text = _passwordCtrl.text;
+    return _showErrors || text.isNotEmpty ? validateAuthPassword(text) : null;
+  }
 
   @override
   void dispose() {
@@ -59,7 +65,9 @@ class _RegisterPasswordScreenState extends State<RegisterPasswordScreen> {
               child: TextField(
                 controller: _passwordCtrl,
                 obscureText: _obscure,
+                onChanged: (_) => setState(() {}),
                 decoration: authInputDecoration(hintText: 'Enter Password').copyWith(
+                  errorText: _passwordError,
                   suffixIcon: IconButton(
                     onPressed: () => setState(() => _obscure = !_obscure),
                     icon: Icon(_obscure ? Icons.visibility_off_outlined : Icons.visibility_outlined, color: AuthColors.grey, size: 22),
@@ -69,7 +77,7 @@ class _RegisterPasswordScreenState extends State<RegisterPasswordScreen> {
             ),
             const SizedBox(height: 12),
             Text(
-              'Your password must be at least 8 characters.',
+              'Your password must be at least $authPasswordMinLength characters.',
               textAlign: TextAlign.center,
               style: TextStyle(color: AuthColors.grey, fontSize: 13),
             ),
@@ -80,9 +88,8 @@ class _RegisterPasswordScreenState extends State<RegisterPasswordScreen> {
                 label: 'Next',
                 onPressed: () {
                   final password = _passwordCtrl.text;
-                  final error = validateAuthPassword(password);
-                  if (error != null) {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+                  if (validateAuthPassword(password) != null) {
+                    setState(() => _showErrors = true);
                     return;
                   }
                   Navigator.push(

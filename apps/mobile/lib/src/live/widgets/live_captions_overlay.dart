@@ -52,6 +52,54 @@ class LiveCaptionsOverlay extends StatelessWidget {
   }
 }
 
+class LiveHearTranslateToggleButton extends StatelessWidget {
+  const LiveHearTranslateToggleButton({
+    super.key,
+    required this.enabled,
+    required this.active,
+    required this.onPressed,
+  });
+
+  final bool enabled;
+  final bool active;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!enabled) return const SizedBox.shrink();
+    final iconColor = active ? const Color(0xFF0A0A0A) : Colors.white;
+    return Semantics(
+      button: true,
+      label: 'Hear translation',
+      toggled: active,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(999),
+          child: SizedBox(
+            width: 40,
+            height: 40,
+            child: Align(
+              child: Container(
+                width: 36,
+                height: 36,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: active ? const Color(0xFF34D399).withValues(alpha: 0.92) : Colors.black.withValues(alpha: 0.45),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.35)),
+                ),
+                child: Icon(Icons.headphones_rounded, color: iconColor, size: 18),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class LiveAiTranslatorToggleButton extends StatelessWidget {
   const LiveAiTranslatorToggleButton({
     super.key,

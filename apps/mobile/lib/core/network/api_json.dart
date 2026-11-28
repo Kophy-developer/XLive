@@ -39,7 +39,16 @@ class ApiJson {
     if (value == null) return fallback;
     if (value is int) return value;
     if (value is double) return value.round();
+    if (value is List || value is Map) return fallback;
     return int.tryParse(value.toString()) ?? fallback;
+  }
+
+  static int? metricIntOrNull(Object? value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is double) return value.round();
+    if (value is List || value is Map) return null;
+    return int.tryParse(value.toString());
   }
 
   static bool boolValue(Object? value, {bool fallback = false}) {
@@ -75,7 +84,8 @@ class ApiJson {
   static int pickMetricInt(Map<String, dynamic> json, List<String> keys, {int fallback = 0, int depth = 0}) {
     if (depth > 4) return fallback;
     for (final key in keys) {
-      if (json[key] != null) return intValue(json[key], fallback: fallback);
+      final parsed = metricIntOrNull(json[key]);
+      if (parsed != null) return parsed;
     }
     for (final nestedKey in ['stats', 'metrics', 'analytics', 'engagement', 'insights']) {
       final nested = map(json[nestedKey]);
