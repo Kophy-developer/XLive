@@ -52,6 +52,28 @@ export function disconnectSocket() {
   }
 }
 
+export function isSocketConnected(): boolean {
+  return Boolean(socket?.connected);
+}
+
+/** Calls handler immediately with the current state, then on connect/disconnect. */
+export function onSocketConnection(handler: (connected: boolean) => void): () => void {
+  const s = connectSocket();
+  if (!s) {
+    handler(false);
+    return () => {};
+  }
+  const onConnect = () => handler(true);
+  const onDisconnect = () => handler(false);
+  s.on("connect", onConnect);
+  s.on("disconnect", onDisconnect);
+  handler(s.connected);
+  return () => {
+    s.off("connect", onConnect);
+    s.off("disconnect", onDisconnect);
+  };
+}
+
 export function onSocketEvent<T = unknown>(event: string, handler: (data: T) => void) {
   const s = connectSocket();
   if (!s) return () => {};

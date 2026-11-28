@@ -68,7 +68,7 @@ class MediaUrlCache {
       try {
         final detail = await SocialRepository().getMediaDetail(targetType: targetType, targetId: id);
         if (detail.streamUrl != null && detail.streamUrl!.isNotEmpty) {
-          media = ClipMediaUrl(url: detail.streamUrl);
+          media = ClipMediaUrl(url: detail.streamUrl, expiresAt: detail.streamExpiresAt);
           put(targetType, id, media);
         }
       } catch (_) {}

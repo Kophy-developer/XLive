@@ -1,8 +1,8 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AuthGuard } from "@/components/auth-guard";
 import { AccountChip } from "@/components/account-chip";
 import { signOut } from "@/lib/api/auth";
@@ -13,6 +13,8 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
 } from "@/lib/api/misc";
+import { onSocketEvent, socketEvents } from "@/lib/socket";
+import { useSocketFallbackPoll } from "@/lib/socket-fallback";
 import { useAuthStore } from "@/lib/stores";
 import type { NotificationItem } from "@/lib/types";
 import { cloudinaryUrl, cn } from "@/lib/utils";
@@ -36,10 +38,11 @@ export default function NotificationsPage() {
   const [unreadFilter, setUnreadFilter] = useState(false);
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
 
+  const queryClient = useQueryClient();
   const { data, isLoading, refetch } = useQuery({
     queryKey: ["notifications"],
     queryFn: () => getNotifications(1, 50),
-    refetchInterval: 15000,
+    refetchOnWindowFocus: true,
   });
 
   const rawItems = data?.notifications ?? [];
@@ -51,8 +54,19 @@ export default function NotificationsPage() {
       setNotificationUnread(count);
       return count;
     },
-    refetchInterval: 20000,
+    refetchOnWindowFocus: true,
   });
+
+  const refreshNotifications = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ["notifications"] });
+    void queryClient.invalidateQueries({ queryKey: ["notifications-unread-count"] });
+  }, [queryClient]);
+
+  useEffect(() => {
+    return onSocketEvent(socketEvents.notificationCreated, refreshNotifications);
+  }, [refreshNotifications]);
+
+  useSocketFallbackPoll(refreshNotifications);
 
   const items = rawItems.filter((n) => {
     const isUnread = !n.readAt && !n.read && !readIds.has(n.id);

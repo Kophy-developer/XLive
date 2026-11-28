@@ -5,6 +5,10 @@ final _hostXLiveUpload = RegExp(
   caseSensitive: false,
 );
 
+bool _isSignedCloudinaryUrl(String url) {
+  return RegExp(r'/s--[^/]+--/').hasMatch(url);
+}
+
 String? _cloudinaryVideoFromHostUpload(String path) {
   final match = _hostXLiveUpload.firstMatch(path.trim());
   if (match == null) return null;
@@ -22,6 +26,7 @@ String resolveMediaUrl(String? raw, {String? resourceType}) {
     final fromHost = _cloudinaryVideoFromHostUpload(trimmed);
     if (fromHost != null) return fromHost;
   }
+  if (_isSignedCloudinaryUrl(trimmed)) return trimmed;
   var url = trimmed;
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
     if (resourceType == 'image' && trimmed.contains('/video/upload/')) {
@@ -58,6 +63,7 @@ String playbackVideoUrl(String? raw) {
   if (trimmed.isEmpty) return '';
   final fromHost = _cloudinaryVideoFromHostUpload(trimmed);
   if (fromHost != null) return fromHost;
+  if (_isSignedCloudinaryUrl(trimmed)) return trimmed;
   final match = RegExp(
     r'^(https?://res\.cloudinary\.com/[^/]+)/(?:video|image)/upload/(.*)$',
     caseSensitive: false,

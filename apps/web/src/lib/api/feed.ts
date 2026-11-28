@@ -171,6 +171,11 @@ export function normalizeFeedItem(raw: Record<string, unknown>): FeedItem {
     previewUrl: (d?.previewUrl ?? raw?.previewUrl) as string | undefined,
     mediaUrl,
     streamUrl: (d?.streamUrl ?? raw?.streamUrl) as string | undefined,
+    streamExpiresAt: (typeof d?.streamExpiresAt === "string"
+      ? d.streamExpiresAt
+      : typeof raw?.streamExpiresAt === "string"
+        ? raw.streamExpiresAt
+        : undefined) as string | undefined,
     creator,
     creatorId,
     creatorName: creatorUsername,

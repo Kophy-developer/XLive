@@ -1,5 +1,7 @@
 import { config } from "../config";
 import { session } from "../session";
+import { disconnectSocket } from "../socket";
+import { useAuthStore } from "../stores";
 
 export class ApiError extends Error {
   status: number;
@@ -25,6 +27,27 @@ async function parseJson(res: Response) {
 /** Auth endpoints live on the main backend under `/api/x-live/auth/*`. */
 export const AUTH_API_PREFIX = "/api/x-live";
 
+let handlingUnauthorized = false;
+
+/** Clear a rejected session once, stop in-flight UI, and send the user to sign-in. */
+function handleUnauthorized() {
+  if (typeof window === "undefined" || handlingUnauthorized) return;
+  handlingUnauthorized = true;
+  session.clear();
+  useAuthStore.setState({
+    isAuthenticated: false,
+    user: null,
+    notificationUnread: 0,
+    unreadTotal: 0,
+  });
+  disconnectSocket();
+  if (!window.location.pathname.startsWith("/auth/")) {
+    window.location.assign("/auth/sign-in");
+    return;
+  }
+  handlingUnauthorized = false;
+}
+
 async function request<T>(
   base: "auth" | "api",
   path: string,
@@ -32,16 +55,21 @@ async function request<T>(
 ): Promise<T> {
   const url = `${config.apiBaseUrl}${base === "auth" ? AUTH_API_PREFIX : ""}${path}`;
   const headers = new Headers(options.headers);
-  if (!headers.has("Content-Type") && !(options.body instanceof FormData)) {
+  const hasBody = options.body != null && options.body !== "" && !(options.body instanceof FormData);
+  if (hasBody && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
+  let jwt: string | null = null;
   if (options.auth !== false) {
-    const jwt = session.getJwt();
+    jwt = session.getJwt();
     if (jwt) headers.set("Authorization", `Bearer ${jwt}`);
   }
   const res = await fetch(url, { ...options, headers });
   const body = await parseJson(res);
   if (!res.ok) {
+    if (res.status === 401 && jwt) {
+      handleUnauthorized();
+    }
     let message = res.statusText || "Request failed";
     if (typeof body === "object" && body !== null) {
       const b = body as Record<string, unknown>;

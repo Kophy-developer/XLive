@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:http/http.dart' as http;
 import 'package:video_player/video_player.dart';
 
 import '../../core/network/api_friendly_messages.dart';
@@ -382,6 +383,17 @@ class _VideoClipPreviewScreenState extends State<VideoClipPreviewScreen> with Wi
         u.contains('.heic');
   }
 
+  static const _videoUnavailableMessage = 'This video is unavailable';
+
+  Future<bool> _urlIsMissing(String url) async {
+    try {
+      final res = await http.head(Uri.parse(url)).timeout(const Duration(seconds: 8));
+      return res.statusCode == 404 || res.statusCode == 410;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> _initVideo(String url) async {
     final token = _mediaLoadToken;
     final old = _videoController;
@@ -444,10 +456,12 @@ class _VideoClipPreviewScreenState extends State<VideoClipPreviewScreen> with Wi
       await controller.dispose();
       if (_videoController == controller) _videoController = null;
       if (!mounted || token != _mediaLoadToken) return;
+      final missing = await _urlIsMissing(url);
+      if (!mounted || token != _mediaLoadToken) return;
       setState(() {
         _videoReady = false;
         _loadingMedia = false;
-        _mediaError = 'Could not play this video. Please retry.';
+        _mediaError = missing ? _videoUnavailableMessage : 'Could not play this video. Please retry.';
       });
     }
   }
@@ -524,6 +538,15 @@ class _VideoClipPreviewScreenState extends State<VideoClipPreviewScreen> with Wi
       await playResolved(resolved, treatAsImage: treatAsImage);
     } catch (e) {
       if (!mounted || token != _mediaLoadToken) return;
+      if (e is ApiException && (e.statusCode == 404 || e.statusCode == 410)) {
+        if (mounted && token == _mediaLoadToken) {
+          setState(() {
+            _loadingMedia = false;
+            _mediaError = _videoUnavailableMessage;
+          });
+        }
+        return;
+      }
       final message = friendlyApiMessage(e, fallback: 'Could not load video. Please retry.');
       final lower = message.toLowerCase();
       final isSubscriber = SubscriptionStore.instance.isSubscribedTo(_creatorId);

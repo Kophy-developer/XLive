@@ -190,3 +190,25 @@ class AuthXliveLogoMark extends StatelessWidget {
     );
   }
 }
+
+/// Scrollable, keyboard-aware body that still pins the bottom button on tall screens.
+class AuthScrollBody extends StatelessWidget {
+  const AuthScrollBody({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return SingleChildScrollView(
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: IntrinsicHeight(child: child),
+          ),
+        );
+      },
+    );
+  }
+}

@@ -36,7 +36,8 @@ class _RegisterPasswordScreenState extends State<RegisterPasswordScreen> {
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
-        child: Column(
+        child: AuthScrollBody(
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             AuthTopBar(
@@ -106,6 +107,7 @@ class _RegisterPasswordScreenState extends State<RegisterPasswordScreen> {
               child: AuthLegalFooter(),
             ),
           ],
+        ),
         ),
       ),
     );

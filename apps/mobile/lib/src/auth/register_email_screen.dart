@@ -123,7 +123,8 @@ class _RegisterEmailScreenState extends State<RegisterEmailScreen> {
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
-        child: Column(
+        child: AuthScrollBody(
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             AuthTopBar(
@@ -183,6 +184,7 @@ class _RegisterEmailScreenState extends State<RegisterEmailScreen> {
               child: AuthLegalFooter(),
             ),
           ],
+        ),
         ),
       ),
     );

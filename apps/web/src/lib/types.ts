@@ -41,6 +41,7 @@ export type FeedItem = {
   previewUrl?: string;
   mediaUrl?: string;
   streamUrl?: string;
+  streamExpiresAt?: string;
   creator?: XLiveUser;
   creatorId?: string;
   creatorName?: string;

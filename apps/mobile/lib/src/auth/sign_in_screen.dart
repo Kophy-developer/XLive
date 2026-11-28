@@ -108,7 +108,8 @@ class _SignInScreenState extends State<SignInScreen> {
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
-        child: Column(
+        child: AuthScrollBody(
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Align(
@@ -154,8 +155,7 @@ class _SignInScreenState extends State<SignInScreen> {
               ),
             ),
             const SizedBox(height: 24),
-            Expanded(
-              child: Padding(
+            Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 24),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -215,8 +215,8 @@ class _SignInScreenState extends State<SignInScreen> {
                   ],
                 ),
               ),
-            ),
           ],
+        ),
         ),
       ),
     );

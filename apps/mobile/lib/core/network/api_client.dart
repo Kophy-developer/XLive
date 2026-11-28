@@ -24,6 +24,38 @@ class ApiClient {
 
   static const _requestTimeout = Duration(seconds: 20);
 
+  /// Called once when a token-bearing request is rejected with 401.
+  static Future<void> Function()? onUnauthorized;
+  static bool _handlingUnauthorized = false;
+
+  static void _emitUnauthorized() {
+    if (_handlingUnauthorized) return;
+    _handlingUnauthorized = true;
+    final callback = onUnauthorized;
+    if (callback == null) {
+      _handlingUnauthorized = false;
+      return;
+    }
+    scheduleMicrotask(() async {
+      try {
+        await callback();
+      } finally {
+        _handlingUnauthorized = false;
+      }
+    });
+  }
+
+  Map<String, dynamic> _handleResponse(http.Response response, {String? token}) {
+    try {
+      return _parseResponse(response);
+    } on ApiException catch (e) {
+      if (e.statusCode == 401 && token != null && token.isNotEmpty) {
+        _emitUnauthorized();
+      }
+      rethrow;
+    }
+  }
+
   SessionStore get sessionStore => _session;
 
   Future<Map<String, dynamic>> authPost(
@@ -233,7 +265,11 @@ class ApiClient {
   }) async {
     final streamed = await _sendMultipart(request, onSendProgress: onSendProgress).timeout(timeout);
     final response = await http.Response.fromStream(streamed).timeout(timeout);
-    return _parseResponse(response);
+    final authorization = request.headers['Authorization'];
+    final token = authorization != null && authorization.startsWith('Bearer ')
+        ? authorization.substring(7)
+        : null;
+    return _handleResponse(response, token: token);
   }
 
   Future<T> _withUploadRetries<T>({
@@ -294,8 +330,9 @@ class ApiClient {
     if (body != null) {
       headers['Content-Type'] = 'application/json';
     }
+    String? token;
     if (auth) {
-      final token = await _session.readJwt();
+      token = await _session.readJwt();
       if (token == null || token.isEmpty) {
         throw ApiException('Not signed in', statusCode: 401);
       }
@@ -334,7 +371,7 @@ class ApiClient {
       throw ApiException(connectionErrorMessage, statusCode: 408);
     }
 
-    return _parseResponse(response);
+    return _handleResponse(response, token: token);
   }
 
   Map<String, dynamic> _parseResponse(http.Response response) {

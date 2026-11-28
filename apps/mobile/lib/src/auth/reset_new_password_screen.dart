@@ -76,7 +76,8 @@ class _ResetNewPasswordScreenState extends State<ResetNewPasswordScreen> {
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
-        child: Column(
+        child: AuthScrollBody(
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             AuthTopBar(
@@ -133,6 +134,7 @@ class _ResetNewPasswordScreenState extends State<ResetNewPasswordScreen> {
               ),
             ),
           ],
+        ),
         ),
       ),
     );

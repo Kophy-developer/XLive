@@ -102,7 +102,7 @@ class VideosRepository {
     try {
       final detail = await getVideo(videoId);
       if (detail.streamUrl != null && detail.streamUrl!.isNotEmpty) {
-        final media = ClipMediaUrl(url: detail.streamUrl);
+        final media = ClipMediaUrl(url: detail.streamUrl, expiresAt: detail.streamExpiresAt);
         MediaUrlCache.put('video', videoId, media);
         return media;
       }

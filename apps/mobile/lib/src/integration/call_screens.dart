@@ -204,6 +204,7 @@ class _IncomingCallOverlayState extends State<IncomingCallOverlay> with WidgetsB
   bool _syncingGroupRooms = false;
   bool _scanningActiveCalls = false;
   Timer? _activeCallPollTimer;
+  AppLifecycleState _lifecycle = AppLifecycleState.resumed;
 
   @override
   void initState() {
@@ -211,13 +212,8 @@ class _IncomingCallOverlayState extends State<IncomingCallOverlay> with WidgetsB
     WidgetsBinding.instance.addObserver(this);
     final socket = XLiveSocketClient.instance;
     socket.addListener(_onSocketClientChanged);
-    _activeCallPollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
-      if (mounted) {
-        _scanActiveGroupCalls();
-        _scanActiveDmCalls();
-        _checkActivePromptValidity();
-      }
-    });
+    _lifecycle = AppLifecycleState.resumed;
+    _armFallbackPoll();
     _dmIncomingSub = socket.onDmCallIncoming.listen((data) {
       final payload = IncomingCallPayload.fromJson(data);
       if (payload.callId.isEmpty || payload.groupId != null) return;
@@ -242,18 +238,42 @@ class _IncomingCallOverlayState extends State<IncomingCallOverlay> with WidgetsB
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    _lifecycle = state;
     if (state == AppLifecycleState.resumed) {
       if (!XLiveSocketClient.instance.isConnected) {
         unawaited(XLiveSocketClient.instance.connectIfSignedIn());
       }
       _syncGroupSocketRooms();
-      _scanActiveGroupCalls();
-      _scanActiveDmCalls();
+      _runCallCatchUp();
     }
+    _armFallbackPoll();
   }
 
   void _onSocketClientChanged() {
     _syncGroupSocketRooms();
+    if (_lifecycle == AppLifecycleState.resumed && AuthSession.instance.isSignedIn) {
+      _runCallCatchUp();
+    }
+    _armFallbackPoll();
+  }
+
+  void _runCallCatchUp() {
+    if (!mounted) return;
+    _scanActiveGroupCalls();
+    _scanActiveDmCalls();
+    _checkActivePromptValidity();
+  }
+
+  void _armFallbackPoll() {
+    _activeCallPollTimer?.cancel();
+    _activeCallPollTimer = null;
+    final shouldPoll = _lifecycle == AppLifecycleState.resumed &&
+        AuthSession.instance.isSignedIn &&
+        !XLiveSocketClient.instance.isConnected;
+    if (!shouldPoll) return;
+    _activeCallPollTimer = Timer.periodic(const Duration(seconds: 45), (_) {
+      if (mounted) _runCallCatchUp();
+    });
   }
 
   Future<void> _syncGroupSocketRooms() async {

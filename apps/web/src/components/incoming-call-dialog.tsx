@@ -15,6 +15,7 @@ import {
   onSocketEvent,
   socketEvents,
 } from "@/lib/socket";
+import { useSocketFallbackPoll } from "@/lib/socket-fallback";
 import { useAuthStore, useCallStore } from "@/lib/stores";
 
 type IncomingCall = {
@@ -286,67 +287,61 @@ export function IncomingCallDialog() {
     };
   }, [currentUserId, clearActiveCall, handleIncomingDm, stopRingtone, startRingtone]);
 
-  useEffect(() => {
-    let polling = false;
-    const pollInterval = setInterval(async () => {
-      if (call || polling) return;
-      if (typeof window !== "undefined" && window.location.pathname.includes("/call")) return;
-      if (!session.isAuthenticated()) return;
+  const pathname = usePathname();
+  const scanIncomingCalls = useCallback(async () => {
+    if (call) return;
+    if (pathname.includes("/call")) return;
+    if (!session.isAuthenticated()) return;
+    try {
+      const res = await api.get<Record<string, unknown>>("/api/x-live/notifications?limit=3");
+      const data = (res && typeof res === "object" && "data" in res && res.data ? res.data : res) as Record<string, unknown>;
+      const docs = (Array.isArray(data?.docs) ? data.docs : Array.isArray(data?.items) ? data.items : []) as Record<string, unknown>[];
 
-      polling = true;
-      try {
-        const res = await api.get<Record<string, unknown>>("/api/x-live/notifications?limit=3", false);
-        const data = (res && typeof res === "object" && "data" in res && res.data ? res.data : res) as Record<string, unknown>;
-        const docs = (Array.isArray(data?.docs) ? data.docs : Array.isArray(data?.items) ? data.items : []) as Record<string, unknown>[];
+      for (const notif of docs) {
+        const type = String(notif.type || "");
+        if (type !== "dm_call" && type !== "call") continue;
 
-        for (const notif of docs) {
-          const type = String(notif.type || "");
-          if (type !== "dm_call" && type !== "call") continue;
-
-          const createdAt = String(notif.createdAt || "");
-          if (createdAt) {
-            const ageMs = Date.now() - new Date(createdAt).getTime();
-            if (ageMs > 50_000) continue;
-          }
-
-          const notifData = (notif.data && typeof notif.data === "object" ? notif.data : {}) as Record<string, unknown>;
-          const actor = (notif.actor && typeof notif.actor === "object" ? notif.actor : {}) as Record<string, unknown>;
-          const callId = String(notifData.callId || notifData.id || notif.id || "");
-          if (!callId || handledCallsRef.current.has(callId)) continue;
-
-          const chatId = String(notifData.chatId || "");
-          if (!chatId) continue;
-
-          const active = await getActiveDmCall(chatId);
-          if (active && (active.status === "ringing" || active.status === "active") && active.id === callId) {
-            handleIncomingDm({
-              call: {
-                id: callId,
-                callId,
-                chatId,
-                type: notifData.callType || notifData.type || active.type,
-                callerId: notifData.callerId || actor.id || actor._id,
-                channel: active.channel,
-                token: active.token,
-                appId: active.appId,
-                uid: active.uid,
-              },
-              chatId,
-              callerId: notifData.callerId || actor.id || actor._id,
-              callerName: actor.username || actor.displayName || notif.title,
-              callerAvatarUrl: actor.avatarUrl,
-            });
-            break;
-          }
+        const createdAt = String(notif.createdAt || "");
+        if (createdAt) {
+          const ageMs = Date.now() - new Date(createdAt).getTime();
+          if (ageMs > 50_000) continue;
         }
-      } catch {
-      } finally {
-        polling = false;
-      }
-    }, 2500);
 
-    return () => clearInterval(pollInterval);
-  }, [call, handleIncomingDm]);
+        const notifData = (notif.data && typeof notif.data === "object" ? notif.data : {}) as Record<string, unknown>;
+        const actor = (notif.actor && typeof notif.actor === "object" ? notif.actor : {}) as Record<string, unknown>;
+        const callId = String(notifData.callId || notifData.id || notif.id || "");
+        if (!callId || handledCallsRef.current.has(callId)) continue;
+
+        const chatId = String(notifData.chatId || "");
+        if (!chatId) continue;
+
+        const active = await getActiveDmCall(chatId);
+        if (active && (active.status === "ringing" || active.status === "active") && active.id === callId) {
+          handleIncomingDm({
+            call: {
+              id: callId,
+              callId,
+              chatId,
+              type: notifData.callType || notifData.type || active.type,
+              callerId: notifData.callerId || actor.id || actor._id,
+              channel: active.channel,
+              token: active.token,
+              appId: active.appId,
+              uid: active.uid,
+            },
+            chatId,
+            callerId: notifData.callerId || actor.id || actor._id,
+            callerName: actor.username || actor.displayName || notif.title,
+            callerAvatarUrl: actor.avatarUrl,
+          });
+          break;
+        }
+      }
+    } catch {
+    }
+  }, [call, handleIncomingDm, pathname]);
+
+  useSocketFallbackPoll(scanIncomingCalls, { enabled: Boolean(currentUserId) });
 
   useEffect(() => {
     if (!call || call.isGroup || !call.chatId) return;

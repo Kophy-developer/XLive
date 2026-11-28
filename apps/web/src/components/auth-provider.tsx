@@ -1,15 +1,16 @@
 "use client";
 
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import { useAuthStore } from "@/lib/stores";
 import { session } from "@/lib/session";
 import { getMe } from "@/lib/api/auth";
 import { getUnreadSummary } from "@/lib/api/chats";
 import { getNotificationUnreadCount } from "@/lib/api/misc";
 import { connectSocket, disconnectSocket, onSocketEvent, socketEvents } from "@/lib/socket";
+import { useSocketFallbackPoll } from "@/lib/socket-fallback";
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const { setUser, setLoading, setAuthenticated, setUnreadTotal, setNotificationUnread } = useAuthStore();
+  const { isAuthenticated, setUser, setLoading, setAuthenticated, setUnreadTotal, setNotificationUnread } = useAuthStore();
 
   useEffect(() => {
     let cancelled = false;
@@ -59,29 +60,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return off;
   }, [setUnreadTotal]);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function refreshNotifBadge() {
-      try {
-        const count = await getNotificationUnreadCount();
-        if (!cancelled) setNotificationUnread(count);
-      } catch {
-        /* keep last known badge */
-      }
+  const refreshNotifBadge = useCallback(async () => {
+    if (!session.isAuthenticated()) return;
+    try {
+      const count = await getNotificationUnreadCount();
+      setNotificationUnread(count);
+    } catch {
+      /* keep last known badge */
     }
+  }, [setNotificationUnread]);
+
+  useEffect(() => {
     const offCreated = onSocketEvent(socketEvents.notificationCreated, () => {
       void refreshNotifBadge();
     });
-    const interval = window.setInterval(() => {
-      if (!session.isAuthenticated()) return;
-      void refreshNotifBadge();
-    }, 45000);
-    return () => {
-      cancelled = true;
-      offCreated();
-      window.clearInterval(interval);
-    };
-  }, [setNotificationUnread]);
+    return offCreated;
+  }, [refreshNotifBadge]);
+
+  useSocketFallbackPoll(refreshNotifBadge, { enabled: isAuthenticated });
 
   return <>{children}</>;
 }

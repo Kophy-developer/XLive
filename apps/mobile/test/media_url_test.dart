@@ -34,4 +34,11 @@ void main() {
     const other = 'https://xlive-app-bcqre.ondigitalocean.app/uploads/chat/abc.mp4';
     expect(playbackVideoUrl(other), other);
   });
+
+  test('signed Cloudinary URLs are not rewritten', () {
+    const signed =
+        'https://res.cloudinary.com/dnof89azc/image/upload/s--vGFBuVeq--/v1/x-live/posts/abc/file.mp4?_a=BAMAK';
+    expect(resolveMediaUrl(signed, resourceType: 'video'), signed);
+    expect(playbackVideoUrl(signed), signed);
+  });
 }
